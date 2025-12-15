@@ -70,15 +70,32 @@ class ExchangeService:
         """Get or create exchange instance."""
         if self._exchange is None:
             exchange_class = getattr(ccxt, self.exchange_id)
-            self._exchange = exchange_class({
+            
+            # Base config
+            config = {
                 'apiKey': self._api_key,
                 'secret': self._api_secret,
                 'enableRateLimit': True,
+                'timeout': 30000,  # 30 seconds timeout
                 'options': {
-                    'defaultType': 'future',
                     'adjustForTimeDifference': True,
                 }
-            })
+            }
+            
+            # Exchange-specific options
+            if self.exchange_id == 'bybit':
+                # Bybit V5 API uses 'linear' for USDT perpetual contracts
+                config['options']['defaultType'] = 'linear'
+                # Skip fetching currencies to speed up initialization
+                config['options']['fetchCurrencies'] = False
+            elif self.exchange_id == 'okx':
+                config['options']['defaultType'] = 'swap'
+            else:
+                # Binance and others
+                config['options']['defaultType'] = 'future'
+            
+            self._exchange = exchange_class(config)
+            
             if self._sandbox:
                 self._exchange.set_sandbox_mode(True)
             

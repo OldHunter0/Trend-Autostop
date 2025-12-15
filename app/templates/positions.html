@@ -1,44 +1,38 @@
 {% extends "base.html" %}
 
-{% block title %}仓位管理 - Trend-Autostop{% endblock %}
+{% block title %}智能止损 - Trend-Autostop{% endblock %}
 
-{% block page_title %}仓位管理{% endblock %}
+{% block page_title %}智能止损{% endblock %}
 
 {% block content %}
 <div class="content-split">
     <!-- Config Form -->
     <section class="card form-card">
         <div class="card-header">
-            <h2 id="form-title">新建托管</h2>
+            <h2 id="form-title">开启智能止损</h2>
         </div>
         <div class="card-body">
             <form id="config-form" onsubmit="submitConfig(event)">
                 <input type="hidden" id="config-id" value="">
+                <input type="hidden" id="symbol" name="symbol" value="">
+                <input type="hidden" id="side" name="side" value="">
                 
                 <div class="form-group">
-                    <label for="symbol">交易对 <span class="required">*</span></label>
-                    <input type="text" id="symbol" name="symbol" placeholder="例如: BTC/USDT:USDT" required>
-                    <small>合约交易对格式，需包含结算货币</small>
+                    <label for="credential_id">API账户 <span class="required">*</span></label>
+                    <select id="credential_id" name="credential_id" required onchange="loadUnmanagedPositions()">
+                        <option value="">选择账户...</option>
+                        {% for cred in credentials %}
+                        <option value="{{ cred.id }}">{{ cred.name }} ({{ cred.exchange }})</option>
+                        {% endfor %}
+                    </select>
                 </div>
                 
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="side">方向 <span class="required">*</span></label>
-                        <select id="side" name="side" required>
-                            <option value="long">做多 (Long)</option>
-                            <option value="short">做空 (Short)</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="credential_id">API账户 <span class="required">*</span></label>
-                        <select id="credential_id" name="credential_id" required>
-                            <option value="">选择账户...</option>
-                            {% for cred in credentials %}
-                            <option value="{{ cred.id }}">{{ cred.name }} ({{ cred.exchange }})</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                <div class="form-group">
+                    <label for="position_select">选择仓位 <span class="required">*</span></label>
+                    <select id="position_select" name="position_select" required onchange="onPositionSelect()">
+                        <option value="">请先选择API账户...</option>
+                    </select>
+                    <small>从您的未托管仓位中选择</small>
                 </div>
                 
                 <div class="form-divider">
@@ -122,7 +116,7 @@
                 <div class="form-actions">
                     <button type="button" class="btn btn-ghost" onclick="resetForm()">重置</button>
                     <button type="submit" class="btn btn-primary">
-                        <span id="submit-text">创建托管</span>
+                        <span id="submit-text">开启止损</span>
                     </button>
                 </div>
             </form>
@@ -132,7 +126,7 @@
     <!-- Configs List -->
     <section class="card">
         <div class="card-header">
-            <h2>托管列表</h2>
+            <h2>已开启智能止损</h2>
         </div>
         <div class="card-body">
             {% if configs %}
@@ -182,8 +176,8 @@
             </div>
             {% else %}
             <div class="empty-state">
-                <div class="empty-icon">📭</div>
-                <p>暂无托管配置</p>
+                <div class="empty-icon">🛡️</div>
+                <p>暂无已开启的智能止损</p>
             </div>
             {% endif %}
         </div>
@@ -214,16 +208,67 @@
 
 {% block extra_js %}
 <script>
-const configs = {{ configs|tojson if configs else '[]' }};
+const configs = {{ configs|tojson|default('[]', true) }};
+let unmanagedPositions = [];
+
+async function loadUnmanagedPositions() {
+    const credentialId = document.getElementById('credential_id').value;
+    const positionSelect = document.getElementById('position_select');
+    
+    if (!credentialId) {
+        positionSelect.innerHTML = '<option value="">请先选择API账户...</option>';
+        return;
+    }
+    
+    positionSelect.innerHTML = '<option value="">加载中...</option>';
+    
+    try {
+        const res = await fetch(`/api/credentials/${credentialId}/unmanaged-positions`);
+        if (!res.ok) throw new Error('Failed to load positions');
+        
+        unmanagedPositions = await res.json();
+        
+        if (unmanagedPositions.length === 0) {
+            positionSelect.innerHTML = '<option value="">暂无未托管仓位</option>';
+        } else {
+            positionSelect.innerHTML = '<option value="">选择仓位...</option>';
+            unmanagedPositions.forEach((pos, idx) => {
+                const pnlClass = pos.unrealized_pnl >= 0 ? '盈利' : '亏损';
+                const sideText = pos.side === 'long' ? '做多' : '做空';
+                positionSelect.innerHTML += `<option value="${idx}">${pos.symbol} | ${sideText} | ${pos.size} | ${pnlClass}: ${pos.unrealized_pnl.toFixed(2)} USDT</option>`;
+            });
+        }
+    } catch (err) {
+        positionSelect.innerHTML = '<option value="">加载失败，请重试</option>';
+        showToast('加载仓位失败: ' + err.message, 'error');
+    }
+}
+
+function onPositionSelect() {
+    const idx = document.getElementById('position_select').value;
+    if (idx === '' || !unmanagedPositions[idx]) return;
+    
+    const pos = unmanagedPositions[idx];
+    document.getElementById('symbol').value = pos.symbol;
+    document.getElementById('side').value = pos.side;
+}
 
 async function submitConfig(e) {
     e.preventDefault();
     const form = e.target;
     const configId = document.getElementById('config-id').value;
     
+    const symbol = document.getElementById('symbol').value;
+    const side = document.getElementById('side').value;
+    
+    if (!configId && (!symbol || !side)) {
+        showToast('请选择一个仓位', 'error');
+        return;
+    }
+    
     const data = {
-        symbol: form.symbol.value,
-        side: form.side.value,
+        symbol: symbol,
+        side: side,
         credential_id: parseInt(form.credential_id.value),
         timeframe: form.timeframe.value,
         sl_offset: parseFloat(form.sl_offset.value),
@@ -251,7 +296,7 @@ async function submitConfig(e) {
         
         if (!res.ok) throw new Error('Failed to save');
         
-        showToast(configId ? '配置已更新' : '托管已创建', 'success');
+        showToast(configId ? '配置已更新' : '智能止损已开启', 'success');
         location.reload();
     } catch (err) {
         showToast('保存失败: ' + err.message, 'error');
@@ -263,12 +308,19 @@ function loadConfig(id) {
     if (!config) return;
     
     document.getElementById('config-id').value = config.id;
-    document.getElementById('form-title').textContent = '编辑托管';
+    document.getElementById('form-title').textContent = '编辑智能止损';
     document.getElementById('submit-text').textContent = '保存修改';
     
     document.getElementById('symbol').value = config.symbol;
     document.getElementById('side').value = config.side;
     document.getElementById('credential_id').value = config.credential_id;
+    
+    // 编辑模式下，禁用仓位选择并显示当前仓位信息
+    const positionSelect = document.getElementById('position_select');
+    const sideText = config.side === 'long' ? '做多' : '做空';
+    positionSelect.innerHTML = `<option value="current">${config.symbol} | ${sideText} (当前托管)</option>`;
+    positionSelect.disabled = true;
+    
     document.getElementById('timeframe').value = config.timeframe;
     document.getElementById('sl_offset').value = config.sl_offset;
     document.getElementById('delay_bars').value = config.delay_bars;
@@ -289,8 +341,12 @@ function loadConfig(id) {
 function resetForm() {
     document.getElementById('config-form').reset();
     document.getElementById('config-id').value = '';
-    document.getElementById('form-title').textContent = '新建托管';
-    document.getElementById('submit-text').textContent = '创建托管';
+    document.getElementById('symbol').value = '';
+    document.getElementById('side').value = '';
+    document.getElementById('form-title').textContent = '开启智能止损';
+    document.getElementById('submit-text').textContent = '开启止损';
+    document.getElementById('position_select').disabled = false;
+    document.getElementById('position_select').innerHTML = '<option value="">请先选择API账户...</option>';
 }
 
 function adjustStop(configId, currentPrice) {
@@ -337,11 +393,24 @@ async function deleteConfig(id) {
     }
 }
 
-// Check URL params for edit mode
+// Check URL params for edit mode or prefill
 const urlParams = new URLSearchParams(window.location.search);
 const editId = urlParams.get('edit');
+const prefillSymbol = urlParams.get('symbol');
+const prefillSide = urlParams.get('side');
+const prefillCredentialId = urlParams.get('credential_id');
+
 if (editId) {
     loadConfig(parseInt(editId));
+} else if (prefillSymbol && prefillSide && prefillCredentialId) {
+    // Prefill from URL (from dashboard unmanaged positions)
+    document.getElementById('symbol').value = prefillSymbol;
+    document.getElementById('side').value = prefillSide;
+    document.getElementById('credential_id').value = prefillCredentialId;
+    
+    const sideText = prefillSide === 'long' ? '做多' : '做空';
+    const positionSelect = document.getElementById('position_select');
+    positionSelect.innerHTML = `<option value="prefilled" selected>${prefillSymbol} | ${sideText}</option>`;
 }
 </script>
 {% endblock %}

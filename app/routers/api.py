@@ -1,4 +1,5 @@
 """API routes for position management."""
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
@@ -6,6 +7,8 @@ from typing import List
 from datetime import datetime
 
 from app.core.database import get_db
+
+logger = logging.getLogger(__name__)
 from app.core.security import encrypt_api_key, decrypt_api_key
 from app.models.position import PositionConfig, Position, OperationLog, APICredential
 from app.schemas.position import (
@@ -64,6 +67,68 @@ async def delete_credential(credential_id: int, db: AsyncSession = Depends(get_d
     await db.delete(credential)
     await db.commit()
     return {"message": "Credential deleted"}
+
+
+@router.get("/credentials/{credential_id}/unmanaged-positions")
+async def get_unmanaged_positions(credential_id: int, db: AsyncSession = Depends(get_db)):
+    """Get positions that are not yet managed by any config."""
+    # Get credential
+    result = await db.execute(select(APICredential).where(APICredential.id == credential_id))
+    credential = result.scalar_one_or_none()
+    if not credential:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    
+    # Get all configs for this credential
+    configs_result = await db.execute(
+        select(PositionConfig).where(PositionConfig.credential_id == credential_id)
+    )
+    configs = configs_result.scalars().all()
+    
+    # Build set of managed position keys (symbol + side)
+    managed_keys = {(c.symbol, c.side) for c in configs}
+    
+    exchange = None
+    try:
+        logger.info(f"Connecting to {credential.exchange} (testnet={credential.is_testnet})")
+        
+        # Create exchange service
+        exchange = ExchangeService(
+            exchange_id=credential.exchange,
+            api_key=decrypt_api_key(credential.api_key_encrypted),
+            api_secret=decrypt_api_key(credential.api_secret_encrypted),
+            sandbox=credential.is_testnet
+        )
+        
+        # Get all positions from exchange
+        logger.info("Fetching positions from exchange...")
+        all_positions = await exchange.get_positions()
+        logger.info(f"Found {len(all_positions)} positions")
+        
+        # Filter out managed positions
+        unmanaged = [
+            {
+                "symbol": p.symbol,
+                "side": p.side,
+                "size": p.size,
+                "entry_price": p.entry_price,
+                "unrealized_pnl": p.unrealized_pnl,
+                "leverage": p.leverage,
+                "current_price": p.current_price,
+                "liquidation_price": p.liquidation_price
+            }
+            for p in all_positions
+            if (p.symbol, p.side) not in managed_keys
+        ]
+        
+        logger.info(f"Returning {len(unmanaged)} unmanaged positions")
+        return unmanaged
+        
+    except Exception as e:
+        logger.exception(f"Failed to fetch positions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch positions: {str(e)}")
+    finally:
+        if exchange:
+            await exchange.close()
 
 
 # ============ Position Configs ============

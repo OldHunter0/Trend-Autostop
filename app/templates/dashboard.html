@@ -41,12 +41,27 @@
     </div>
 </div>
 
-<!-- Positions Table -->
+<!-- Unmanaged Positions -->
 <section class="card">
     <div class="card-header">
-        <h2>托管仓位</h2>
+        <h2>未托管仓位</h2>
+        <button class="btn btn-ghost btn-sm" onclick="refreshUnmanagedPositions()">
+            <span>🔄</span> 刷新
+        </button>
+    </div>
+    <div class="card-body" id="unmanaged-positions-container">
+        <div class="loading-state">
+            <p>加载中...</p>
+        </div>
+    </div>
+</section>
+
+<!-- Managed Positions Table -->
+<section class="card">
+    <div class="card-header">
+        <h2>智能止损仓位</h2>
         <a href="/positions" class="btn btn-primary btn-sm">
-            <span>➕</span> 新建托管
+            <span>➕</span> 开启止损
         </a>
     </div>
     <div class="card-body">
@@ -107,9 +122,9 @@
         </div>
         {% else %}
         <div class="empty-state">
-            <div class="empty-icon">📭</div>
-            <p>暂无托管仓位</p>
-            <a href="/positions" class="btn btn-primary">创建第一个托管</a>
+            <div class="empty-icon">🛡️</div>
+            <p>暂无智能止损仓位</p>
+            <a href="/positions" class="btn btn-primary">开启第一个智能止损</a>
         </div>
         {% endif %}
     </div>
@@ -149,6 +164,98 @@
 
 {% block extra_js %}
 <script>
+const credentialIds = {{ credentials|map(attribute='id')|list|tojson }};
+
+async function loadUnmanagedPositions() {
+    const container = document.getElementById('unmanaged-positions-container');
+    
+    if (credentialIds.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state small">
+                <p>请先在设置中添加API账户</p>
+                <a href="/settings" class="btn btn-ghost btn-sm">前往设置</a>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = '<div class="loading-state"><p>加载中...</p></div>';
+    
+    let allUnmanaged = [];
+    
+    for (const credId of credentialIds) {
+        try {
+            const res = await fetch(`/api/credentials/${credId}/unmanaged-positions`);
+            if (res.ok) {
+                const positions = await res.json();
+                positions.forEach(p => {
+                    p.credential_id = credId;
+                });
+                allUnmanaged = allUnmanaged.concat(positions);
+            }
+        } catch (err) {
+            console.error('Failed to load positions for credential', credId, err);
+        }
+    }
+    
+    if (allUnmanaged.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state small">
+                <div class="empty-icon">✅</div>
+                <p>所有仓位均已托管</p>
+            </div>
+        `;
+        return;
+    }
+    
+    let tableHtml = `
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>交易对</th>
+                        <th>方向</th>
+                        <th>数量</th>
+                        <th>开仓价</th>
+                        <th>未实现盈亏</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    allUnmanaged.forEach(pos => {
+        const sideClass = pos.side === 'long' ? 'badge-success' : 'badge-danger';
+        const sideText = pos.side === 'long' ? 'LONG' : 'SHORT';
+        const pnlClass = pos.unrealized_pnl >= 0 ? 'profit' : 'loss';
+        
+        tableHtml += `
+            <tr>
+                <td class="symbol">${pos.symbol}</td>
+                <td><span class="badge ${sideClass}">${sideText}</span></td>
+                <td class="mono">${pos.size}</td>
+                <td class="mono">${pos.entry_price.toFixed(4)}</td>
+                <td class="mono ${pnlClass}">${pos.unrealized_pnl.toFixed(2)} USDT</td>
+                <td class="actions">
+                    <a href="/positions?symbol=${encodeURIComponent(pos.symbol)}&side=${pos.side}&credential_id=${pos.credential_id}" 
+                       class="btn btn-primary btn-sm">开启止损</a>
+                </td>
+            </tr>
+        `;
+    });
+    
+    tableHtml += '</tbody></table></div>';
+    container.innerHTML = tableHtml;
+}
+
+function refreshUnmanagedPositions() {
+    loadUnmanagedPositions();
+    showToast('正在刷新仓位...', 'info');
+}
+
+// Load on page init
+document.addEventListener('DOMContentLoaded', loadUnmanagedPositions);
+
 async function pauseConfig(id) {
     await fetch(`/api/configs/${id}/pause`, { method: 'POST' });
     showToast('任务已暂停', 'success');
@@ -162,9 +269,9 @@ async function resumeConfig(id) {
 }
 
 async function deleteConfig(id) {
-    if (!confirm('确定删除此托管配置？')) return;
+    if (!confirm('确定关闭此智能止损？')) return;
     await fetch(`/api/configs/${id}`, { method: 'DELETE' });
-    showToast('配置已删除', 'success');
+    showToast('智能止损已关闭', 'success');
     location.reload();
 }
 
