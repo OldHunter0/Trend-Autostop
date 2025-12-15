@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+
+{% block title %}操作日志 - Trend-Autostop{% endblock %}
+
+{% block page_title %}操作日志{% endblock %}
+
+{% block content %}
+<section class="card full-width">
+    <div class="card-header">
+        <h2>全部日志</h2>
+        <div class="header-controls">
+            <button class="btn btn-ghost btn-sm" onclick="location.reload()">
+                🔄 刷新
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        {% if logs %}
+        <div class="table-responsive">
+            <table class="data-table logs-table">
+                <thead>
+                    <tr>
+                        <th style="width: 140px;">时间</th>
+                        <th style="width: 100px;">操作</th>
+                        <th style="width: 120px;">交易对</th>
+                        <th>消息</th>
+                        <th style="width: 180px;">价格变动</th>
+                        <th style="width: 60px;">状态</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in logs %}
+                    <tr class="{% if not log.success %}row-error{% endif %}">
+                        <td class="mono text-muted">{{ log.created_at.strftime('%m-%d %H:%M:%S') }}</td>
+                        <td>
+                            <span class="action-badge action-{{ log.action }}">
+                                {% if log.action == 'update_stop' %}🎯
+                                {% elif log.action == 'create_config' %}➕
+                                {% elif log.action == 'manual_adjust' %}✏️
+                                {% elif log.action == 'error' %}❌
+                                {% elif log.action == 'info' %}ℹ️
+                                {% else %}📋
+                                {% endif %}
+                                {{ log.action }}
+                            </span>
+                        </td>
+                        <td class="symbol">{{ log.symbol or '--' }}</td>
+                        <td class="log-message-cell">{{ log.message }}</td>
+                        <td class="mono">
+                            {% if log.old_value and log.new_value %}
+                            <span class="price-change">
+                                {{ "%.4f"|format(log.old_value) }}
+                                <span class="arrow">→</span>
+                                {{ "%.4f"|format(log.new_value) }}
+                            </span>
+                            {% else %}
+                            <span class="text-muted">--</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.success %}
+                            <span class="status-dot success" title="成功"></span>
+                            {% else %}
+                            <span class="status-dot error" title="{{ log.error_message or '失败' }}"></span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% if log.error_message %}
+                    <tr class="error-detail-row">
+                        <td colspan="6">
+                            <div class="error-detail">{{ log.error_message }}</div>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">📋</div>
+            <p>暂无操作日志</p>
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}
+

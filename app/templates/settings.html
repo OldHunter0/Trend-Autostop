@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}设置 - Trend-Autostop{% endblock %}
+
+{% block page_title %}设置{% endblock %}
+
+{% block content %}
+<div class="content-split">
+    <!-- Add Credential Form -->
+    <section class="card form-card">
+        <div class="card-header">
+            <h2>添加 API 账户</h2>
+        </div>
+        <div class="card-body">
+            <form id="credential-form" onsubmit="submitCredential(event)">
+                <div class="form-group">
+                    <label for="cred-name">账户名称 <span class="required">*</span></label>
+                    <input type="text" id="cred-name" name="name" placeholder="例如: Binance Main" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="cred-exchange">交易所 <span class="required">*</span></label>
+                    <select id="cred-exchange" name="exchange" required>
+                        <option value="binance">Binance</option>
+                        <option value="okx">OKX</option>
+                        <option value="bybit">Bybit</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="cred-api-key">API Key <span class="required">*</span></label>
+                    <input type="password" id="cred-api-key" name="api_key" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="cred-api-secret">API Secret <span class="required">*</span></label>
+                    <input type="password" id="cred-api-secret" name="api_secret" required>
+                </div>
+                
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="cred-testnet" name="is_testnet">
+                        <span>测试网 (Testnet)</span>
+                    </label>
+                </div>
+                
+                <div class="security-notice">
+                    <span class="icon">🔒</span>
+                    <div>
+                        <strong>安全提示</strong>
+                        <p>API密钥将使用AES-256加密存储。请确保API权限<strong>仅开启读取和交易</strong>，<strong>禁用提现</strong>权限。</p>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">添加账户</button>
+                </div>
+            </form>
+        </div>
+    </section>
+    
+    <!-- Credentials List -->
+    <section class="card">
+        <div class="card-header">
+            <h2>已保存账户</h2>
+        </div>
+        <div class="card-body">
+            {% if credentials %}
+            <div class="credential-list">
+                {% for cred in credentials %}
+                <div class="credential-card">
+                    <div class="credential-info">
+                        <span class="credential-name">{{ cred.name }}</span>
+                        <span class="credential-exchange">{{ cred.exchange|upper }}</span>
+                        {% if cred.is_testnet %}
+                        <span class="badge badge-warning">测试网</span>
+                        {% endif %}
+                    </div>
+                    <div class="credential-meta">
+                        <span>创建于 {{ cred.created_at.strftime('%Y-%m-%d') }}</span>
+                    </div>
+                    <div class="credential-actions">
+                        <button class="btn btn-sm btn-danger" onclick="deleteCredential({{ cred.id }}, '{{ cred.name }}')">
+                            删除
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">🔑</div>
+                <p>暂无保存的API账户</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function submitCredential(e) {
+    e.preventDefault();
+    const form = e.target;
+    
+    const data = {
+        name: form.name.value,
+        exchange: form.exchange.value,
+        api_key: form.api_key.value,
+        api_secret: form.api_secret.value,
+        is_testnet: form.is_testnet.checked
+    };
+    
+    try {
+        const res = await fetch('/api/credentials', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        if (!res.ok) throw new Error('Failed to save');
+        
+        showToast('账户已添加', 'success');
+        form.reset();
+        location.reload();
+    } catch (err) {
+        showToast('保存失败: ' + err.message, 'error');
+    }
+}
+
+async function deleteCredential(id, name) {
+    if (!confirm(`确定删除账户 "${name}"？相关的托管配置也将无法使用。`)) return;
+    
+    try {
+        await fetch(`/api/credentials/${id}`, { method: 'DELETE' });
+        showToast('账户已删除', 'success');
+        location.reload();
+    } catch (err) {
+        showToast('删除失败', 'error');
+    }
+}
+</script>
+{% endblock %}
+

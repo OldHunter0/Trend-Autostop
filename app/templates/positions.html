@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+
+{% block title %}仓位管理 - Trend-Autostop{% endblock %}
+
+{% block page_title %}仓位管理{% endblock %}
+
+{% block content %}
+<div class="content-split">
+    <!-- Config Form -->
+    <section class="card form-card">
+        <div class="card-header">
+            <h2 id="form-title">新建托管</h2>
+        </div>
+        <div class="card-body">
+            <form id="config-form" onsubmit="submitConfig(event)">
+                <input type="hidden" id="config-id" value="">
+                
+                <div class="form-group">
+                    <label for="symbol">交易对 <span class="required">*</span></label>
+                    <input type="text" id="symbol" name="symbol" placeholder="例如: BTC/USDT:USDT" required>
+                    <small>合约交易对格式，需包含结算货币</small>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="side">方向 <span class="required">*</span></label>
+                        <select id="side" name="side" required>
+                            <option value="long">做多 (Long)</option>
+                            <option value="short">做空 (Short)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="credential_id">API账户 <span class="required">*</span></label>
+                        <select id="credential_id" name="credential_id" required>
+                            <option value="">选择账户...</option>
+                            {% for cred in credentials %}
+                            <option value="{{ cred.id }}">{{ cred.name }} ({{ cred.exchange }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-divider">
+                    <span>策略参数</span>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="timeframe">时间周期</label>
+                        <select id="timeframe" name="timeframe">
+                            {% for tf in timeframes %}
+                            <option value="{{ tf }}" {% if tf == '15min' %}selected{% endif %}>{{ tf }}</option>
+                            {% endfor %}
+                        </select>
+                        <small>策略计算基于的K线级别</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="sl_offset">SL Offset</label>
+                        <input type="number" id="sl_offset" name="sl_offset" value="0" step="0.0001" min="0">
+                        <small>额外的价格止损偏移量</small>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="delay_bars">生效延迟 (K线数)</label>
+                    <input type="number" id="delay_bars" name="delay_bars" value="0" min="0">
+                    <small>开仓后前N根K线不调整止损</small>
+                </div>
+                
+                <details class="advanced-settings">
+                    <summary>高级参数 (SuperTrend)</summary>
+                    <div class="advanced-content">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="ema_len">EMA 长度</label>
+                                <input type="number" id="ema_len" name="ema_len" value="8" min="2">
+                            </div>
+                            <div class="form-group">
+                                <label for="atr_len">ATR 长度</label>
+                                <input type="number" id="atr_len" name="atr_len" value="14" min="1">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="base_mult">基础乘数</label>
+                                <input type="number" id="base_mult" name="base_mult" value="2.0" step="0.1" min="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="vol_lookback">波动回溯期</label>
+                                <input type="number" id="vol_lookback" name="vol_lookback" value="20" min="2">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="trend_lookback">趋势回溯期</label>
+                                <input type="number" id="trend_lookback" name="trend_lookback" value="25" min="2">
+                            </div>
+                            <div class="form-group">
+                                <label for="trend_impact">趋势影响因子</label>
+                                <input type="number" id="trend_impact" name="trend_impact" value="0.4" step="0.05" min="0" max="1">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="mult_min">最小乘数</label>
+                                <input type="number" id="mult_min" name="mult_min" value="1.0" step="0.1" min="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="mult_max">最大乘数</label>
+                                <input type="number" id="mult_max" name="mult_max" value="4.0" step="0.1" min="0.5">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="confirm_bars">确认K线数</label>
+                            <input type="number" id="confirm_bars" name="confirm_bars" value="1" min="1">
+                        </div>
+                    </div>
+                </details>
+                
+                <div class="form-actions">
+                    <button type="button" class="btn btn-ghost" onclick="resetForm()">重置</button>
+                    <button type="submit" class="btn btn-primary">
+                        <span id="submit-text">创建托管</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </section>
+    
+    <!-- Configs List -->
+    <section class="card">
+        <div class="card-header">
+            <h2>托管列表</h2>
+        </div>
+        <div class="card-body">
+            {% if configs %}
+            <div class="config-list">
+                {% for config in configs %}
+                <div class="config-card" data-id="{{ config.id }}">
+                    <div class="config-header">
+                        <span class="config-symbol">{{ config.symbol }}</span>
+                        <span class="badge {% if config.side == 'long' %}badge-success{% else %}badge-danger{% endif %}">
+                            {{ config.side|upper }}
+                        </span>
+                        <span class="status-badge status-{{ config.status }}">
+                            {{ config.status }}
+                        </span>
+                    </div>
+                    <div class="config-details">
+                        <div class="detail-item">
+                            <span class="label">周期</span>
+                            <span class="value">{{ config.timeframe }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">当前止损</span>
+                            <span class="value mono">
+                                {% if config.current_stop_price %}
+                                {{ "%.4f"|format(config.current_stop_price) }}
+                                {% else %}
+                                --
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">Offset</span>
+                            <span class="value">{{ config.sl_offset }}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="label">延迟</span>
+                            <span class="value">{{ config.bars_since_open }}/{{ config.delay_bars }}</span>
+                        </div>
+                    </div>
+                    <div class="config-actions">
+                        <button class="btn btn-sm btn-ghost" onclick="loadConfig({{ config.id }})">编辑</button>
+                        <button class="btn btn-sm btn-ghost" onclick="adjustStop({{ config.id }}, {{ config.current_stop_price or 0 }})">调整止损</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteConfig({{ config.id }})">删除</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <p>暂无托管配置</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</div>
+
+<!-- Adjust Stop Modal -->
+<div id="adjust-modal" class="modal-backdrop hidden">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>手动调整止损</h3>
+            <button class="btn-close" onclick="closeModal('adjust-modal')">&times;</button>
+        </div>
+        <form id="adjust-form" onsubmit="submitAdjust(event)">
+            <input type="hidden" id="adjust-config-id">
+            <div class="form-group">
+                <label for="new_stop_price">新止损价格</label>
+                <input type="number" id="new_stop_price" step="0.0001" required>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-ghost" onclick="closeModal('adjust-modal')">取消</button>
+                <button type="submit" class="btn btn-primary">确认调整</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const configs = {{ configs|tojson if configs else '[]' }};
+
+async function submitConfig(e) {
+    e.preventDefault();
+    const form = e.target;
+    const configId = document.getElementById('config-id').value;
+    
+    const data = {
+        symbol: form.symbol.value,
+        side: form.side.value,
+        credential_id: parseInt(form.credential_id.value),
+        timeframe: form.timeframe.value,
+        sl_offset: parseFloat(form.sl_offset.value),
+        delay_bars: parseInt(form.delay_bars.value),
+        ema_len: parseInt(form.ema_len.value),
+        atr_len: parseInt(form.atr_len.value),
+        base_mult: parseFloat(form.base_mult.value),
+        vol_lookback: parseInt(form.vol_lookback.value),
+        trend_lookback: parseInt(form.trend_lookback.value),
+        trend_impact: parseFloat(form.trend_impact.value),
+        mult_min: parseFloat(form.mult_min.value),
+        mult_max: parseFloat(form.mult_max.value),
+        confirm_bars: parseInt(form.confirm_bars.value)
+    };
+    
+    try {
+        const url = configId ? `/api/configs/${configId}` : '/api/configs';
+        const method = configId ? 'PATCH' : 'POST';
+        
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        if (!res.ok) throw new Error('Failed to save');
+        
+        showToast(configId ? '配置已更新' : '托管已创建', 'success');
+        location.reload();
+    } catch (err) {
+        showToast('保存失败: ' + err.message, 'error');
+    }
+}
+
+function loadConfig(id) {
+    const config = configs.find(c => c.id === id);
+    if (!config) return;
+    
+    document.getElementById('config-id').value = config.id;
+    document.getElementById('form-title').textContent = '编辑托管';
+    document.getElementById('submit-text').textContent = '保存修改';
+    
+    document.getElementById('symbol').value = config.symbol;
+    document.getElementById('side').value = config.side;
+    document.getElementById('credential_id').value = config.credential_id;
+    document.getElementById('timeframe').value = config.timeframe;
+    document.getElementById('sl_offset').value = config.sl_offset;
+    document.getElementById('delay_bars').value = config.delay_bars;
+    document.getElementById('ema_len').value = config.ema_len;
+    document.getElementById('atr_len').value = config.atr_len;
+    document.getElementById('base_mult').value = config.base_mult;
+    document.getElementById('vol_lookback').value = config.vol_lookback;
+    document.getElementById('trend_lookback').value = config.trend_lookback;
+    document.getElementById('trend_impact').value = config.trend_impact;
+    document.getElementById('mult_min').value = config.mult_min;
+    document.getElementById('mult_max').value = config.mult_max;
+    document.getElementById('confirm_bars').value = config.confirm_bars;
+    
+    // Scroll to form
+    document.querySelector('.form-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+function resetForm() {
+    document.getElementById('config-form').reset();
+    document.getElementById('config-id').value = '';
+    document.getElementById('form-title').textContent = '新建托管';
+    document.getElementById('submit-text').textContent = '创建托管';
+}
+
+function adjustStop(configId, currentPrice) {
+    document.getElementById('adjust-config-id').value = configId;
+    document.getElementById('new_stop_price').value = currentPrice || '';
+    document.getElementById('adjust-modal').classList.remove('hidden');
+}
+
+function closeModal(id) {
+    document.getElementById(id).classList.add('hidden');
+}
+
+async function submitAdjust(e) {
+    e.preventDefault();
+    const configId = document.getElementById('adjust-config-id').value;
+    const newPrice = parseFloat(document.getElementById('new_stop_price').value);
+    
+    try {
+        const res = await fetch(`/api/configs/${configId}/adjust-stop`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_stop_price: newPrice })
+        });
+        
+        if (!res.ok) throw new Error('Failed to adjust');
+        
+        showToast('止损已调整', 'success');
+        closeModal('adjust-modal');
+        location.reload();
+    } catch (err) {
+        showToast('调整失败: ' + err.message, 'error');
+    }
+}
+
+async function deleteConfig(id) {
+    if (!confirm('确定删除此托管配置？')) return;
+    
+    try {
+        await fetch(`/api/configs/${id}`, { method: 'DELETE' });
+        showToast('配置已删除', 'success');
+        location.reload();
+    } catch (err) {
+        showToast('删除失败', 'error');
+    }
+}
+
+// Check URL params for edit mode
+const urlParams = new URLSearchParams(window.location.search);
+const editId = urlParams.get('edit');
+if (editId) {
+    loadConfig(parseInt(editId));
+}
+</script>
+{% endblock %}
+

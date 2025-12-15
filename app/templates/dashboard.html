@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - Trend-Autostop{% endblock %}
+
+{% block page_title %}仪表盘{% endblock %}
+
+{% block content %}
+<!-- Stats Cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon bullish">📈</div>
+        <div class="stat-info">
+            <span class="stat-value">{{ stats.total_positions }}</span>
+            <span class="stat-label">持仓数量</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon active">⚡</div>
+        <div class="stat-info">
+            <span class="stat-value">{{ stats.active_tasks }}</span>
+            <span class="stat-label">活跃任务</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon paused">⏸️</div>
+        <div class="stat-info">
+            <span class="stat-value">{{ stats.paused_tasks }}</span>
+            <span class="stat-label">暂停任务</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon {% if stats.total_pnl >= 0 %}bullish{% else %}bearish{% endif %}">
+            {% if stats.total_pnl >= 0 %}💰{% else %}📉{% endif %}
+        </div>
+        <div class="stat-info">
+            <span class="stat-value {% if stats.total_pnl >= 0 %}profit{% else %}loss{% endif %}">
+                {{ "%.2f"|format(stats.total_pnl) }} USDT
+            </span>
+            <span class="stat-label">未实现盈亏</span>
+        </div>
+    </div>
+</div>
+
+<!-- Positions Table -->
+<section class="card">
+    <div class="card-header">
+        <h2>托管仓位</h2>
+        <a href="/positions" class="btn btn-primary btn-sm">
+            <span>➕</span> 新建托管
+        </a>
+    </div>
+    <div class="card-body">
+        {% if configs %}
+        <div class="table-responsive">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>交易对</th>
+                        <th>方向</th>
+                        <th>时间周期</th>
+                        <th>止损位</th>
+                        <th>SL Offset</th>
+                        <th>延迟K线</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for config in configs %}
+                    <tr>
+                        <td class="symbol">{{ config.symbol }}</td>
+                        <td>
+                            <span class="badge {% if config.side == 'long' %}badge-success{% else %}badge-danger{% endif %}">
+                                {{ config.side|upper }}
+                            </span>
+                        </td>
+                        <td class="mono">{{ config.timeframe }}</td>
+                        <td class="mono">
+                            {% if config.current_stop_price %}
+                            {{ "%.4f"|format(config.current_stop_price) }}
+                            {% else %}
+                            <span class="text-muted">--</span>
+                            {% endif %}
+                        </td>
+                        <td class="mono">{{ config.sl_offset }}</td>
+                        <td class="mono">{{ config.bars_since_open }}/{{ config.delay_bars }}</td>
+                        <td>
+                            <span class="status-badge status-{{ config.status }}">
+                                {% if config.status == 'active' %}运行中
+                                {% elif config.status == 'paused' %}已暂停
+                                {% else %}已停止{% endif %}
+                            </span>
+                        </td>
+                        <td class="actions">
+                            {% if config.status == 'active' %}
+                            <button class="btn btn-icon" onclick="pauseConfig({{ config.id }})" title="暂停">⏸️</button>
+                            {% else %}
+                            <button class="btn btn-icon" onclick="resumeConfig({{ config.id }})" title="恢复">▶️</button>
+                            {% endif %}
+                            <button class="btn btn-icon" onclick="editConfig({{ config.id }})" title="编辑">✏️</button>
+                            <button class="btn btn-icon danger" onclick="deleteConfig({{ config.id }})" title="删除">🗑️</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <p>暂无托管仓位</p>
+            <a href="/positions" class="btn btn-primary">创建第一个托管</a>
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+<!-- Recent Logs -->
+<section class="card">
+    <div class="card-header">
+        <h2>最近操作</h2>
+        <a href="/logs" class="btn btn-ghost btn-sm">查看全部</a>
+    </div>
+    <div class="card-body">
+        {% if logs %}
+        <div class="log-list">
+            {% for log in logs[:10] %}
+            <div class="log-item {% if not log.success %}error{% endif %}">
+                <span class="log-time">{{ log.created_at.strftime('%m-%d %H:%M') }}</span>
+                <span class="log-action">{{ log.action }}</span>
+                <span class="log-symbol">{{ log.symbol or '--' }}</span>
+                <span class="log-message">{{ log.message }}</span>
+                {% if log.old_value and log.new_value %}
+                <span class="log-values">
+                    {{ "%.4f"|format(log.old_value) }} → {{ "%.4f"|format(log.new_value) }}
+                </span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state small">
+            <p>暂无操作记录</p>
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function pauseConfig(id) {
+    await fetch(`/api/configs/${id}/pause`, { method: 'POST' });
+    showToast('任务已暂停', 'success');
+    location.reload();
+}
+
+async function resumeConfig(id) {
+    await fetch(`/api/configs/${id}/resume`, { method: 'POST' });
+    showToast('任务已恢复', 'success');
+    location.reload();
+}
+
+async function deleteConfig(id) {
+    if (!confirm('确定删除此托管配置？')) return;
+    await fetch(`/api/configs/${id}`, { method: 'DELETE' });
+    showToast('配置已删除', 'success');
+    location.reload();
+}
+
+function editConfig(id) {
+    window.location.href = `/positions?edit=${id}`;
+}
+</script>
+{% endblock %}
+
