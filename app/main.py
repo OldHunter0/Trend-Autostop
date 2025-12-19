@@ -8,7 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.database import engine
+from app.core.migrate import sync_database_schema
 from app.routers import api, pages, auth, admin
 from app.services.scheduler import start_scheduler, stop_scheduler
 
@@ -26,9 +27,9 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Trend-Autostop application...")
     
-    # Initialize database
-    await init_db()
-    logger.info("Database initialized")
+    # Initialize and migrate database schema
+    await sync_database_schema(engine)
+    logger.info("Database schema synchronized")
     
     # Start scheduler
     start_scheduler()
