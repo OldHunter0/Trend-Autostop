@@ -70,16 +70,30 @@ class EmailService:
             message.attach(MIMEText(html_content, "html"))
             
             # Send email with detailed logging
-            logger.debug(f"Connecting to SMTP server {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+            # Use SSL for port 465, STARTTLS for port 587
+            use_tls = settings.SMTP_PORT == 465 or getattr(settings, 'SMTP_USE_TLS', False)
+            logger.debug(f"Connecting to SMTP server {settings.SMTP_HOST}:{settings.SMTP_PORT} (SSL={use_tls})")
             
-            await aiosmtplib.send(
-                message,
-                hostname=settings.SMTP_HOST,
-                port=settings.SMTP_PORT,
-                username=settings.SMTP_USER,
-                password=settings.SMTP_PASSWORD,
-                start_tls=True
-            )
+            if use_tls:
+                # SSL connection (port 465)
+                await aiosmtplib.send(
+                    message,
+                    hostname=settings.SMTP_HOST,
+                    port=settings.SMTP_PORT,
+                    username=settings.SMTP_USER,
+                    password=settings.SMTP_PASSWORD,
+                    use_tls=True
+                )
+            else:
+                # STARTTLS connection (port 587)
+                await aiosmtplib.send(
+                    message,
+                    hostname=settings.SMTP_HOST,
+                    port=settings.SMTP_PORT,
+                    username=settings.SMTP_USER,
+                    password=settings.SMTP_PASSWORD,
+                    start_tls=True
+                )
             
             logger.info(f"✓ Email sent successfully to {to_email}")
             return True, None

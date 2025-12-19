@@ -29,11 +29,12 @@ class Settings(BaseSettings):
     
     # Email Configuration
     SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
+    SMTP_PORT: int = 465
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
     SMTP_FROM_EMAIL: str = ""
     SMTP_FROM_NAME: str = "Trend-Autostop"
+    SMTP_USE_TLS: bool = True  # True for SSL (port 465), False for STARTTLS (port 587)
     
     # Email verification token expiry (hours)
     EMAIL_VERIFY_TOKEN_EXPIRE_HOURS: int = 24
