@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+
+{% block title %}管理后台 - Trend-Autostop{% endblock %}
+
+{% block page_title %}管理后台{% endblock %}
+
+{% block content %}
+<!-- Stats Overview -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon active">👥</div>
+        <div class="stat-info">
+            <span class="stat-value" id="total-users">-</span>
+            <span class="stat-label">总用户数</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon bullish">✓</div>
+        <div class="stat-info">
+            <span class="stat-value" id="verified-users">-</span>
+            <span class="stat-label">已验证用户</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon active">📊</div>
+        <div class="stat-info">
+            <span class="stat-value" id="active-configs">-</span>
+            <span class="stat-label">运行中策略</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon paused">🔐</div>
+        <div class="stat-info">
+            <span class="stat-value" id="recent-logins">-</span>
+            <span class="stat-label">24h 登录次数</span>
+        </div>
+    </div>
+</div>
+
+<!-- Users Section -->
+<div class="card">
+    <div class="card-header">
+        <h2>👥 用户管理</h2>
+        <button class="btn btn-ghost btn-sm" onclick="loadUsers()">刷新</button>
+    </div>
+    <div class="table-responsive">
+        <table class="data-table" id="users-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>邮箱</th>
+                    <th>用户名</th>
+                    <th>角色</th>
+                    <th>状态</th>
+                    <th>邮箱验证</th>
+                    <th>最后登录</th>
+                    <th>注册时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="users-tbody">
+                <tr>
+                    <td colspan="9" class="loading-state">
+                        <p>加载中...</p>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Strategies Overview -->
+<div class="card">
+    <div class="card-header">
+        <h2>📊 策略运行概览</h2>
+        <button class="btn btn-ghost btn-sm" onclick="loadStrategies()">刷新</button>
+    </div>
+    <div class="table-responsive">
+        <table class="data-table" id="strategies-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>交易对</th>
+                    <th>方向</th>
+                    <th>状态</th>
+                    <th>周期</th>
+                    <th>当前止损</th>
+                    <th>最后检查</th>
+                    <th>更新时间</th>
+                </tr>
+            </thead>
+            <tbody id="strategies-tbody">
+                <tr>
+                    <td colspan="8" class="loading-state">
+                        <p>加载中...</p>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Audit Logs -->
+<div class="card">
+    <div class="card-header">
+        <h2>📋 审计日志</h2>
+        <div style="display: flex; gap: 0.5rem;">
+            <select id="audit-action-filter" class="form-control" style="width: auto; padding: 0.375rem 0.75rem; font-size: 0.8rem;">
+                <option value="">全部操作</option>
+                <option value="login">登录</option>
+                <option value="logout">登出</option>
+                <option value="register">注册</option>
+                <option value="email_verified">邮箱验证</option>
+                <option value="password_reset">密码重置</option>
+                <option value="bind_api_key">绑定 API Key</option>
+                <option value="unbind_api_key">解绑 API Key</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" onclick="loadAuditLogs()">刷新</button>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="data-table" id="audit-table">
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>用户ID</th>
+                    <th>操作</th>
+                    <th>资源类型</th>
+                    <th>资源ID</th>
+                    <th>IP地址</th>
+                    <th>状态</th>
+                </tr>
+            </thead>
+            <tbody id="audit-tbody">
+                <tr>
+                    <td colspan="7" class="loading-state">
+                        <p>加载中...</p>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Load admin stats
+async function loadStats() {
+    try {
+        const response = await fetch('/api/admin/stats');
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('total-users').textContent = data.users.total;
+            document.getElementById('verified-users').textContent = data.users.verified;
+            document.getElementById('active-configs').textContent = data.trading.active_configs;
+            document.getElementById('recent-logins').textContent = data.health.recent_logins_24h;
+        }
+    } catch (error) {
+        console.error('Failed to load stats:', error);
+    }
+}
+
+// Load users
+async function loadUsers() {
+    const tbody = document.getElementById('users-tbody');
+    tbody.innerHTML = '<tr><td colspan="9" class="loading-state"><p>加载中...</p></td></tr>';
+    
+    try {
+        const response = await fetch('/api/admin/users');
+        if (response.ok) {
+            const users = await response.json();
+            
+            if (users.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" class="empty-state small"><p>暂无用户</p></td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = users.map(user => `
+                <tr>
+                    <td class="mono">${user.id}</td>
+                    <td>${user.email}</td>
+                    <td>${user.username || '-'}</td>
+                    <td><span class="badge ${user.role === 'admin' ? 'badge-warning' : 'badge-success'}">${user.role}</span></td>
+                    <td><span class="status-badge ${user.is_active ? 'status-active' : 'status-stopped'}">${user.is_active ? '活跃' : '禁用'}</span></td>
+                    <td><span class="status-dot ${user.is_email_verified ? 'success' : 'error'}"></span></td>
+                    <td class="mono text-muted">${user.last_login_at ? formatTime(user.last_login_at) : '-'}</td>
+                    <td class="mono text-muted">${formatTime(user.created_at)}</td>
+                    <td class="actions">
+                        ${user.is_active ? 
+                            `<button class="btn-icon" onclick="toggleUser(${user.id}, false)" title="禁用">🚫</button>` :
+                            `<button class="btn-icon" onclick="toggleUser(${user.id}, true)" title="启用">✅</button>`
+                        }
+                    </td>
+                </tr>
+            `).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load users:', error);
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state small"><p>加载失败</p></td></tr>';
+    }
+}
+
+// Toggle user active status
+async function toggleUser(userId, active) {
+    try {
+        const response = await fetch(`/api/admin/users/${userId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: active })
+        });
+        
+        if (response.ok) {
+            showToast(active ? '用户已启用' : '用户已禁用', 'success');
+            loadUsers();
+        } else {
+            const data = await response.json();
+            showToast(data.detail || '操作失败', 'error');
+        }
+    } catch (error) {
+        showToast('操作失败', 'error');
+    }
+}
+
+// Load strategies overview
+async function loadStrategies() {
+    const tbody = document.getElementById('strategies-tbody');
+    tbody.innerHTML = '<tr><td colspan="8" class="loading-state"><p>加载中...</p></td></tr>';
+    
+    try {
+        const response = await fetch('/api/admin/strategies/overview');
+        if (response.ok) {
+            const data = await response.json();
+            const configs = data.configs;
+            
+            if (configs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="empty-state small"><p>暂无运行中的策略</p></td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = configs.map(config => `
+                <tr>
+                    <td class="mono">${config.id}</td>
+                    <td class="symbol">${config.symbol}</td>
+                    <td><span class="badge ${config.side === 'long' ? 'badge-success' : 'badge-danger'}">${config.side}</span></td>
+                    <td><span class="status-badge status-${config.status}">${config.status}</span></td>
+                    <td class="mono">${config.timeframe}</td>
+                    <td class="mono">${config.current_stop ? config.current_stop.toFixed(4) : '-'}</td>
+                    <td class="mono text-muted">${config.last_checked ? formatTime(config.last_checked) : '-'}</td>
+                    <td class="mono text-muted">${config.updated_at ? formatTime(config.updated_at) : '-'}</td>
+                </tr>
+            `).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load strategies:', error);
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state small"><p>加载失败</p></td></tr>';
+    }
+}
+
+// Load audit logs
+async function loadAuditLogs() {
+    const tbody = document.getElementById('audit-tbody');
+    const actionFilter = document.getElementById('audit-action-filter').value;
+    tbody.innerHTML = '<tr><td colspan="7" class="loading-state"><p>加载中...</p></td></tr>';
+    
+    try {
+        let url = '/api/admin/audit-logs?limit=100';
+        if (actionFilter) {
+            url += `&action=${actionFilter}`;
+        }
+        
+        const response = await fetch(url);
+        if (response.ok) {
+            const logs = await response.json();
+            
+            if (logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="empty-state small"><p>暂无审计日志</p></td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = logs.map(log => `
+                <tr class="${log.success ? '' : 'row-error'}">
+                    <td class="mono log-time">${formatTime(log.created_at)}</td>
+                    <td class="mono">${log.user_id || '-'}</td>
+                    <td><span class="action-badge">${log.action}</span></td>
+                    <td>${log.resource_type || '-'}</td>
+                    <td class="mono">${log.resource_id || '-'}</td>
+                    <td class="mono text-muted">${log.ip_address || '-'}</td>
+                    <td><span class="status-dot ${log.success ? 'success' : 'error'}"></span></td>
+                </tr>
+            `).join('');
+        }
+    } catch (error) {
+        console.error('Failed to load audit logs:', error);
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state small"><p>加载失败</p></td></tr>';
+    }
+}
+
+// Format time helper
+function formatTime(isoString) {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    return date.toLocaleString('zh-CN', { 
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit', 
+        minute: '2-digit'
+    });
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    loadUsers();
+    loadStrategies();
+    loadAuditLogs();
+    
+    // Add filter change listener
+    document.getElementById('audit-action-filter').addEventListener('change', loadAuditLogs);
+});
+</script>
+{% endblock %}
+

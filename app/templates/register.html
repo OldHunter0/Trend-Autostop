@@ -1,0 +1,150 @@
+{% extends "auth_base.html" %}
+
+{% block title %}注册 - Trend-Autostop{% endblock %}
+
+{% block content %}
+<div class="auth-card">
+    <h2 class="auth-title">创建账户</h2>
+    
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    
+    <form id="register-form">
+        <div class="form-group">
+            <label class="form-label" for="email">邮箱地址</label>
+            <input 
+                type="email" 
+                id="email" 
+                name="email" 
+                class="form-input" 
+                placeholder="your@email.com"
+                required
+                autocomplete="email"
+            >
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label" for="username">用户名 <span style="color: var(--text-muted)">(可选)</span></label>
+            <input 
+                type="text" 
+                id="username" 
+                name="username" 
+                class="form-input" 
+                placeholder="您的昵称"
+                autocomplete="username"
+            >
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label" for="password">密码</label>
+            <div class="password-toggle">
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    class="form-input" 
+                    placeholder="至少8位字符"
+                    required
+                    minlength="8"
+                    autocomplete="new-password"
+                >
+                <button type="button" class="toggle-btn">👁️</button>
+            </div>
+            <p class="form-hint">密码至少需要8个字符</p>
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label" for="confirm-password">确认密码</label>
+            <div class="password-toggle">
+                <input 
+                    type="password" 
+                    id="confirm-password" 
+                    name="confirm_password" 
+                    class="form-input" 
+                    placeholder="再次输入密码"
+                    required
+                    autocomplete="new-password"
+                >
+                <button type="button" class="toggle-btn">👁️</button>
+            </div>
+        </div>
+        
+        <button type="submit" class="btn btn-primary">
+            <span class="btn-text">创建账户</span>
+            <span class="loading"></span>
+        </button>
+    </form>
+    
+    <div class="auth-footer">
+        <p>已有账户？<a href="/auth/login">立即登录</a></p>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('register-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const password = document.getElementById('password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+    
+    if (password !== confirmPassword) {
+        showAlert('两次输入的密码不一致', 'error');
+        return;
+    }
+    
+    const btn = this.querySelector('button[type="submit"]');
+    btn.classList.add('loading-state');
+    btn.disabled = true;
+    
+    const formData = {
+        email: document.getElementById('email').value,
+        password: password,
+        username: document.getElementById('username').value || null
+    };
+    
+    try {
+        const response = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Redirect to login with success message
+            window.location.href = '/auth/login?message=' + encodeURIComponent('注册成功！请检查邮箱验证您的账户。');
+        } else {
+            showAlert(data.detail || '注册失败，请重试', 'error');
+        }
+    } catch (error) {
+        console.error('Register error:', error);
+        showAlert('网络错误，请重试', 'error');
+    } finally {
+        btn.classList.remove('loading-state');
+        btn.disabled = false;
+    }
+});
+
+function showAlert(message, type) {
+    const existingAlert = document.querySelector('.auth-card .alert');
+    if (existingAlert) {
+        existingAlert.remove();
+    }
+    
+    const alertDiv = document.createElement('div');
+    alertDiv.className = `alert alert-${type}`;
+    alertDiv.textContent = message;
+    
+    const form = document.getElementById('register-form');
+    form.insertBefore(alertDiv, form.firstChild);
+}
+</script>
+{% endblock %}
+

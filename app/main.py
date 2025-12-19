@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.routers import api, pages
+from app.routers import api, pages, auth, admin
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Configure logging
@@ -62,6 +62,8 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 # Include routers
+app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(api.router)
 app.include_router(pages.router)
 

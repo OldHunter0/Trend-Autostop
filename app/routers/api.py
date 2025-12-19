@@ -1,15 +1,21 @@
 """API routes for position management."""
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from typing import List
 from datetime import datetime
 
 from app.core.database import get_db
+from app.core.deps import get_current_user, get_current_active_user, get_client_ip, get_user_agent
+from app.models.user import User, AuditLog
 
 logger = logging.getLogger(__name__)
-from app.core.security import encrypt_api_key, decrypt_api_key
+from app.core.security import (
+    encrypt_api_key, decrypt_api_key,
+    generate_data_key, unwrap_data_key, encrypt_with_data_key, decrypt_with_data_key
+)
 from app.models.position import PositionConfig, Position, OperationLog, APICredential
 from app.schemas.position import (
     PositionConfigCreate,
@@ -28,52 +34,139 @@ from app.services.supertrend import SuperTrendCalculator
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+# ============ Helper Functions ============
+
+async def log_credential_audit(
+    db: AsyncSession,
+    action: str,
+    user: User,
+    credential_id: int,
+    request: Request,
+    success: bool = True,
+    error_message: str = None
+):
+    """Log credential-related audit events."""
+    audit = AuditLog(
+        user_id=user.id,
+        action=action,
+        resource_type="api_credential",
+        resource_id=credential_id,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+        success=success,
+        error_message=error_message
+    )
+    db.add(audit)
+    await db.commit()
+
+
 # ============ API Credentials ============
 
 @router.post("/credentials", response_model=APICredentialResponse, status_code=status.HTTP_201_CREATED)
 async def create_credential(
     data: APICredentialCreate,
+    request: Request,
+    user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create new API credential (encrypted storage)."""
+    """Create new API credential with envelope encryption."""
+    # Generate data key for this credential
+    raw_data_key, wrapped_data_key = generate_data_key()
+    
+    # Encrypt API key and secret with data key
+    api_key_encrypted = encrypt_with_data_key(data.api_key, raw_data_key)
+    api_secret_encrypted = encrypt_with_data_key(data.api_secret, raw_data_key)
+    
     credential = APICredential(
+        user_id=user.id,
         name=data.name,
         exchange=data.exchange,
-        api_key_encrypted=encrypt_api_key(data.api_key),
-        api_secret_encrypted=encrypt_api_key(data.api_secret),
+        wrapped_data_key=wrapped_data_key,
+        api_key_encrypted=api_key_encrypted,
+        api_secret_encrypted=api_secret_encrypted,
         is_testnet=data.is_testnet
     )
     db.add(credential)
     await db.commit()
     await db.refresh(credential)
+    
+    # Log audit
+    await log_credential_audit(db, "bind_api_key", user, credential.id, request)
+    
+    logger.info(f"User {user.id} created API credential {credential.id} for {credential.exchange}")
     return credential
 
 
 @router.get("/credentials", response_model=List[APICredentialResponse])
-async def list_credentials(db: AsyncSession = Depends(get_db)):
-    """List all API credentials."""
-    result = await db.execute(select(APICredential).order_by(desc(APICredential.created_at)))
+async def list_credentials(
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List user's API credentials."""
+    result = await db.execute(
+        select(APICredential)
+        .where(APICredential.user_id == user.id)
+        .order_by(desc(APICredential.created_at))
+    )
     return result.scalars().all()
 
 
 @router.delete("/credentials/{credential_id}")
-async def delete_credential(credential_id: int, db: AsyncSession = Depends(get_db)):
-    """Delete API credential."""
-    result = await db.execute(select(APICredential).where(APICredential.id == credential_id))
+async def delete_credential(
+    credential_id: int,
+    request: Request,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete API credential (unbind)."""
+    result = await db.execute(
+        select(APICredential)
+        .where(APICredential.id == credential_id)
+        .where(APICredential.user_id == user.id)
+    )
     credential = result.scalar_one_or_none()
     if not credential:
         raise HTTPException(status_code=404, detail="Credential not found")
     
+    # Log audit before deletion
+    await log_credential_audit(db, "unbind_api_key", user, credential_id, request)
+    
     await db.delete(credential)
     await db.commit()
+    
+    logger.info(f"User {user.id} deleted API credential {credential_id}")
     return {"message": "Credential deleted"}
 
 
+def decrypt_credential(credential: APICredential) -> tuple:
+    """Decrypt API key and secret from a credential using envelope encryption."""
+    # Check if using envelope encryption (has wrapped_data_key) or legacy
+    if credential.wrapped_data_key:
+        # Envelope encryption
+        data_key = unwrap_data_key(credential.wrapped_data_key)
+        api_key = decrypt_with_data_key(credential.api_key_encrypted, data_key)
+        api_secret = decrypt_with_data_key(credential.api_secret_encrypted, data_key)
+    else:
+        # Legacy encryption
+        api_key = decrypt_api_key(credential.api_key_encrypted)
+        api_secret = decrypt_api_key(credential.api_secret_encrypted)
+    
+    return api_key, api_secret
+
+
 @router.get("/credentials/{credential_id}/unmanaged-positions")
-async def get_unmanaged_positions(credential_id: int, db: AsyncSession = Depends(get_db)):
+async def get_unmanaged_positions(
+    credential_id: int,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
     """Get positions that are not yet managed by any config."""
-    # Get credential
-    result = await db.execute(select(APICredential).where(APICredential.id == credential_id))
+    # Get credential (only user's own)
+    result = await db.execute(
+        select(APICredential)
+        .where(APICredential.id == credential_id)
+        .where(APICredential.user_id == user.id)
+    )
     credential = result.scalar_one_or_none()
     if not credential:
         raise HTTPException(status_code=404, detail="Credential not found")
@@ -91,11 +184,14 @@ async def get_unmanaged_positions(credential_id: int, db: AsyncSession = Depends
     try:
         logger.info(f"Connecting to {credential.exchange} (testnet={credential.is_testnet})")
         
+        # Decrypt credentials
+        api_key, api_secret = decrypt_credential(credential)
+        
         # Create exchange service
         exchange = ExchangeService(
             exchange_id=credential.exchange,
-            api_key=decrypt_api_key(credential.api_key_encrypted),
-            api_secret=decrypt_api_key(credential.api_secret_encrypted),
+            api_key=api_key,
+            api_secret=api_secret,
             sandbox=credential.is_testnet
         )
         
@@ -284,6 +380,7 @@ async def list_positions(db: AsyncSession = Depends(get_db)):
 async def adjust_stop_loss(
     config_id: int,
     data: StopLossAdjustment,
+    user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Manually adjust stop loss price."""
@@ -292,8 +389,12 @@ async def adjust_stop_loss(
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
     
-    # Get credential
-    cred_result = await db.execute(select(APICredential).where(APICredential.id == config.credential_id))
+    # Get credential (verify ownership)
+    cred_result = await db.execute(
+        select(APICredential)
+        .where(APICredential.id == config.credential_id)
+        .where(APICredential.user_id == user.id)
+    )
     credential = cred_result.scalar_one_or_none()
     if not credential:
         raise HTTPException(status_code=404, detail="Credential not found")
@@ -301,11 +402,14 @@ async def adjust_stop_loss(
     old_stop = config.current_stop_price
     
     try:
+        # Decrypt credentials
+        api_key, api_secret = decrypt_credential(credential)
+        
         # Create exchange service and update stop
         exchange = ExchangeService(
             exchange_id=credential.exchange,
-            api_key=decrypt_api_key(credential.api_key_encrypted),
-            api_secret=decrypt_api_key(credential.api_secret_encrypted),
+            api_key=api_key,
+            api_secret=api_secret,
             sandbox=credential.is_testnet
         )
         

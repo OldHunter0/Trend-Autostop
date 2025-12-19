@@ -1,0 +1,64 @@
+{% extends "auth_base.html" %}
+
+{% block title %}邮箱验证 - Trend-Autostop{% endblock %}
+
+{% block content %}
+<div class="auth-card" style="text-align: center;">
+    {% if success %}
+    <div style="font-size: 64px; margin-bottom: 20px;">✅</div>
+    <h2 class="auth-title">邮箱验证成功</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 24px;">
+        您的邮箱已成功验证，现在可以使用完整功能。
+    </p>
+    <a href="/auth/login" class="btn btn-primary">前往登录</a>
+    
+    {% elif error %}
+    <div style="font-size: 64px; margin-bottom: 20px;">❌</div>
+    <h2 class="auth-title">验证失败</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 24px;">
+        {{ error }}
+    </p>
+    <a href="/auth/login" class="btn btn-primary">返回登录</a>
+    
+    {% else %}
+    <div style="font-size: 64px; margin-bottom: 20px;">📧</div>
+    <h2 class="auth-title">验证中...</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 24px;">
+        正在验证您的邮箱，请稍候...
+    </p>
+    <div class="loading" style="display: block; margin: 0 auto;"></div>
+    {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+{% if not success and not error and token %}
+<script>
+// Auto-verify on page load
+(async function() {
+    try {
+        const response = await fetch('/api/auth/verify-email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                token: '{{ token }}'
+            })
+        });
+        
+        if (response.ok) {
+            window.location.href = '/auth/verify-email?success=1';
+        } else {
+            const data = await response.json();
+            window.location.href = '/auth/verify-email?error=' + encodeURIComponent(data.detail || '验证失败');
+        }
+    } catch (error) {
+        window.location.href = '/auth/verify-email?error=' + encodeURIComponent('网络错误，请重试');
+    }
+})();
+</script>
+{% endif %}
+{% endblock %}
+

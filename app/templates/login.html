@@ -1,0 +1,114 @@
+{% extends "auth_base.html" %}
+
+{% block title %}登录 - Trend-Autostop{% endblock %}
+
+{% block content %}
+<div class="auth-card">
+    <h2 class="auth-title">欢迎回来</h2>
+    
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+    
+    {% if message %}
+    <div class="alert alert-success">{{ message }}</div>
+    {% endif %}
+    
+    <form id="login-form" action="/auth/login" method="POST">
+        <div class="form-group">
+            <label class="form-label" for="email">邮箱地址</label>
+            <input 
+                type="email" 
+                id="email" 
+                name="email" 
+                class="form-input" 
+                placeholder="your@email.com"
+                required
+                autocomplete="email"
+            >
+        </div>
+        
+        <div class="form-group">
+            <label class="form-label" for="password">密码</label>
+            <div class="password-toggle">
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    class="form-input" 
+                    placeholder="输入密码"
+                    required
+                    autocomplete="current-password"
+                >
+                <button type="button" class="toggle-btn">👁️</button>
+            </div>
+        </div>
+        
+        <button type="submit" class="btn btn-primary">
+            <span class="btn-text">登录</span>
+            <span class="loading"></span>
+        </button>
+        
+        <div class="auth-links">
+            <a href="/auth/forgot-password">忘记密码？</a>
+        </div>
+    </form>
+    
+    <div class="auth-footer">
+        <p>还没有账户？<a href="/auth/register">立即注册</a></p>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('login-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const btn = this.querySelector('button[type="submit"]');
+    btn.classList.add('loading-state');
+    btn.disabled = true;
+    
+    const formData = {
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value
+    };
+    
+    try {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Redirect to dashboard on success
+            window.location.href = '/';
+        } else {
+            // Show error
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-error';
+            alertDiv.textContent = data.detail || '登录失败，请重试';
+            
+            const existingAlert = this.querySelector('.alert');
+            if (existingAlert) {
+                existingAlert.remove();
+            }
+            this.insertBefore(alertDiv, this.firstChild);
+        }
+    } catch (error) {
+        console.error('Login error:', error);
+        alert('网络错误，请重试');
+    } finally {
+        btn.classList.remove('loading-state');
+        btn.disabled = false;
+    }
+});
+</script>
+{% endblock %}
+

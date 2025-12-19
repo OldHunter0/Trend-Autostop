@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+
+{% block title %}跟随策略 - Trend-Autostop{% endblock %}
+
+{% block page_title %}跟随策略{% endblock %}
+
+{% block content %}
+<!-- Strategy Cards -->
+<div class="strategies-grid">
+    <!-- SuperTrend Strategy Card -->
+    <div class="strategy-card featured">
+        <div class="strategy-header">
+            <div class="strategy-badge active">当前策略</div>
+            <h2 class="strategy-title">📈 自适应 SuperTrend 动态止损</h2>
+            <p class="strategy-subtitle">基于波动率与趋势强度的智能追踪止损策略</p>
+        </div>
+        
+        <div class="strategy-body">
+            <!-- Strategy Description -->
+            <div class="strategy-section">
+                <h3>策略原理</h3>
+                <div class="strategy-content">
+                    <p>SuperTrend 是一种基于 <strong>ATR（平均真实波幅）</strong>的趋势跟踪指标。本策略在传统 SuperTrend 基础上进行了多维度增强：</p>
+                    <ul>
+                        <li><strong>波动率自适应</strong>：根据当前波动率相对于历史波动率的位置，动态调整 ATR 倍数</li>
+                        <li><strong>趋势强度感知</strong>：通过 EMA 趋势斜率判断趋势强弱，趋势强时收紧止损，趋势弱时放宽止损</li>
+                        <li><strong>确认机制</strong>：通过多根 K 线确认信号有效性，减少假突破</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Strategy Advantages -->
+            <div class="strategy-section">
+                <h3>策略优势</h3>
+                <div class="advantages-grid">
+                    <div class="advantage-item">
+                        <span class="advantage-icon">🎯</span>
+                        <div>
+                            <strong>自适应止损</strong>
+                            <p>根据市场波动自动调整止损距离，震荡市放宽、趋势市收紧</p>
+                        </div>
+                    </div>
+                    <div class="advantage-item">
+                        <span class="advantage-icon">🛡️</span>
+                        <div>
+                            <strong>风险控制</strong>
+                            <p>只会向盈利方向移动止损，永远不会把止损往回调</p>
+                        </div>
+                    </div>
+                    <div class="advantage-item">
+                        <span class="advantage-icon">⚡</span>
+                        <div>
+                            <strong>实时追踪</strong>
+                            <p>每个 K 线周期自动计算并更新止损，无需人工盯盘</p>
+                        </div>
+                    </div>
+                    <div class="advantage-item">
+                        <span class="advantage-icon">🔧</span>
+                        <div>
+                            <strong>高度可配置</strong>
+                            <p>支持自定义参数，适应不同交易风格和品种特性</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Parameters -->
+            <div class="strategy-section">
+                <h3>参数说明</h3>
+                <div class="params-table-wrapper">
+                    <table class="params-table">
+                        <thead>
+                            <tr>
+                                <th>参数名</th>
+                                <th>默认值</th>
+                                <th>范围</th>
+                                <th>说明</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="param-name">timeframe</td>
+                                <td class="mono">15min</td>
+                                <td>10m/15m/30m/1h/4h</td>
+                                <td>K 线周期，决定止损更新频率</td>
+                            </tr>
+                            <tr>
+                                <td class="param-name">sl_offset</td>
+                                <td class="mono">0.0</td>
+                                <td>≥ 0</td>
+                                <td>额外止损偏移量（价格单位），在计算结果基础上额外留出安全距离</td>
+                            </tr>
+                            <tr>
+                                <td class="param-name">delay_bars</td>
+                                <td class="mono">0</td>
+                                <td>≥ 0</td>
+                                <td>开仓后延迟 N 根 K 线再开始调整止损，给仓位留出启动空间</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">ema_len</td>
+                                <td class="mono">8</td>
+                                <td>≥ 2</td>
+                                <td>EMA 平滑周期，用于计算趋势斜率</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">atr_len</td>
+                                <td class="mono">14</td>
+                                <td>≥ 1</td>
+                                <td>ATR 计算周期，控制波动率敏感度</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">base_mult</td>
+                                <td class="mono">2.0</td>
+                                <td>≥ 0.1</td>
+                                <td>基础 ATR 倍数，决定基础止损距离</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">vol_lookback</td>
+                                <td class="mono">20</td>
+                                <td>≥ 2</td>
+                                <td>波动率回望周期，用于计算相对波动率</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">vol_power</td>
+                                <td class="mono">1.0</td>
+                                <td>≥ 0.1</td>
+                                <td>波动率影响幂次，控制波动率对倍数的影响强度</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">trend_lookback</td>
+                                <td class="mono">25</td>
+                                <td>≥ 2</td>
+                                <td>趋势判断回望周期</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">trend_impact</td>
+                                <td class="mono">0.4</td>
+                                <td>0 ~ 1</td>
+                                <td>趋势对倍数的影响权重</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">mult_min</td>
+                                <td class="mono">1.0</td>
+                                <td>≥ 0.1</td>
+                                <td>ATR 倍数下限，防止止损过紧</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">mult_max</td>
+                                <td class="mono">4.0</td>
+                                <td>≥ 0.5</td>
+                                <td>ATR 倍数上限，防止止损过松</td>
+                            </tr>
+                            <tr class="advanced">
+                                <td class="param-name">confirm_bars</td>
+                                <td class="mono">1</td>
+                                <td>≥ 1</td>
+                                <td>趋势确认 K 线数量</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Risk Warning -->
+            <div class="strategy-section">
+                <h3>风险提示</h3>
+                <div class="risk-warning">
+                    <div class="risk-icon">⚠️</div>
+                    <div class="risk-content">
+                        <ul>
+                            <li><strong>回撤风险</strong>：任何止损策略都无法完全避免回撤，极端行情下可能出现滑点导致实际止损价格偏离设定值</li>
+                            <li><strong>网络风险</strong>：系统依赖网络连接交易所 API，断网或 API 故障期间无法更新止损</li>
+                            <li><strong>参数敏感</strong>：不同品种、不同市场环境可能需要不同参数，建议先在测试网验证</li>
+                            <li><strong>非投资建议</strong>：本工具仅提供技术支持，不构成任何投资建议，请自行承担交易风险</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="strategy-footer">
+            <a href="/positions" class="btn btn-primary">
+                <span>开始使用此策略</span>
+                <span>→</span>
+            </a>
+        </div>
+    </div>
+    
+    <!-- Coming Soon Card -->
+    <div class="strategy-card coming-soon">
+        <div class="strategy-header">
+            <div class="strategy-badge upcoming">即将推出</div>
+            <h2 class="strategy-title">🔮 更多策略开发中...</h2>
+            <p class="strategy-subtitle">我们正在开发更多智能交易策略</p>
+        </div>
+        <div class="strategy-body">
+            <div class="coming-soon-content">
+                <p>敬请期待以下策略：</p>
+                <ul>
+                    <li>📊 网格交易策略</li>
+                    <li>📈 均线突破策略</li>
+                    <li>🎲 马丁格尔策略</li>
+                    <li>🔄 套利策略</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.strategies-grid {
+    display: grid;
+    gap: 1.5rem;
+}
+
+.strategy-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+}
+
+.strategy-card.featured {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.1);
+}
+
+.strategy-card.coming-soon {
+    opacity: 0.7;
+}
+
+.strategy-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    background: linear-gradient(135deg, rgba(0, 217, 255, 0.05) 0%, rgba(124, 58, 237, 0.05) 100%);
+}
+
+.strategy-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 999px;
+    margin-bottom: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.strategy-badge.active {
+    background: var(--success-bg);
+    color: var(--success);
+}
+
+.strategy-badge.upcoming {
+    background: var(--warning-bg);
+    color: var(--warning);
+}
+
+.strategy-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.strategy-subtitle {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+
+.strategy-body {
+    padding: 1.5rem;
+}
+
+.strategy-section {
+    margin-bottom: 2rem;
+}
+
+.strategy-section:last-child {
+    margin-bottom: 0;
+}
+
+.strategy-section h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--accent-primary);
+}
+
+.strategy-content {
+    color: var(--text-secondary);
+    line-height: 1.8;
+}
+
+.strategy-content ul {
+    margin: 1rem 0;
+    padding-left: 1.5rem;
+}
+
+.strategy-content li {
+    margin-bottom: 0.5rem;
+}
+
+.advantages-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+.advantage-item {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius-sm);
+    border: 1px solid var(--border-color);
+}
+
+.advantage-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.advantage-item strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.advantage-item p {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin: 0;
+}
+
+.params-table-wrapper {
+    overflow-x: auto;
+}
+
+.params-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.params-table th,
+.params-table td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.params-table th {
+    background: var(--bg-tertiary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+}
+
+.params-table .param-name {
+    font-family: var(--font-mono);
+    color: var(--accent-primary);
+    font-weight: 500;
+}
+
+.params-table .advanced {
+    opacity: 0.7;
+}
+
+.params-table .advanced .param-name {
+    color: var(--text-secondary);
+}
+
+.risk-warning {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid var(--warning);
+    border-radius: var(--border-radius-sm);
+}
+
+.risk-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.risk-content ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    color: var(--text-secondary);
+}
+
+.risk-content li {
+    margin-bottom: 0.5rem;
+}
+
+.risk-content li:last-child {
+    margin-bottom: 0;
+}
+
+.strategy-footer {
+    padding: 1.5rem;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+}
+
+.coming-soon-content {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+}
+
+.coming-soon-content ul {
+    list-style: none;
+    padding: 0;
+    margin-top: 1rem;
+}
+
+.coming-soon-content li {
+    padding: 0.5rem 0;
+}
+</style>
+{% endblock %}
+

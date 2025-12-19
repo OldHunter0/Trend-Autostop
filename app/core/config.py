@@ -13,13 +13,31 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = "change_this_in_production"
     ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    
+    # Master key for envelope encryption (API keys)
+    MASTER_KEY: str = "change_this_master_key_in_production_32chars"
     
     # Server
     PORT: int = 8000
     HOST: str = "0.0.0.0"
+    BASE_URL: str = "http://localhost:8000"
     
     # Exchange
     DEFAULT_EXCHANGE: str = "binance"
+    
+    # Email Configuration
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "Trend-Autostop"
+    
+    # Email verification token expiry (hours)
+    EMAIL_VERIFY_TOKEN_EXPIRE_HOURS: int = 24
+    PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 1
     
     # Timeframe options (in minutes)
     TIMEFRAME_OPTIONS: dict = {

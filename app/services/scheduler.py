@@ -12,10 +12,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import async_session_maker
-from app.core.security import decrypt_api_key
+from app.core.security import decrypt_api_key, unwrap_data_key, decrypt_with_data_key
 from app.models.position import PositionConfig, Position, OperationLog, APICredential
 from app.services.supertrend import SuperTrendCalculator
 from app.services.exchange import ExchangeService
+
+
+def decrypt_credential(credential: APICredential) -> tuple:
+    """Decrypt API key and secret using envelope encryption or legacy."""
+    if credential.wrapped_data_key:
+        data_key = unwrap_data_key(credential.wrapped_data_key)
+        api_key = decrypt_with_data_key(credential.api_key_encrypted, data_key)
+        api_secret = decrypt_with_data_key(credential.api_secret_encrypted, data_key)
+    else:
+        api_key = decrypt_api_key(credential.api_key_encrypted)
+        api_secret = decrypt_api_key(credential.api_secret_encrypted)
+    return api_key, api_secret
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +102,19 @@ async def process_config(config: PositionConfig, db: AsyncSession):
             )
             return
         
+        # Decrypt credentials
+        api_key, api_secret = decrypt_credential(credential)
+        
         # Create exchange service
         exchange = ExchangeService(
             exchange_id=credential.exchange,
-            api_key=decrypt_api_key(credential.api_key_encrypted),
-            api_secret=decrypt_api_key(credential.api_secret_encrypted),
+            api_key=api_key,
+            api_secret=api_secret,
             sandbox=credential.is_testnet
         )
+        
+        # Update last used timestamp
+        credential.last_used_at = datetime.utcnow()
         
         try:
             # Check if position still exists

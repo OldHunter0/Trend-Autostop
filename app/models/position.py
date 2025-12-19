@@ -20,15 +20,26 @@ class TaskStatus(str, enum.Enum):
 
 
 class APICredential(Base):
-    """Encrypted API credentials storage."""
+    """Encrypted API credentials storage with envelope encryption."""
     __tablename__ = "api_credentials"
     
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=True, index=True)  # Link to user (nullable for migration)
     name = Column(String(100), nullable=False)
     exchange = Column(String(50), nullable=False, default="binance")
+    
+    # Envelope encryption: data key wrapped with master key, secrets encrypted with data key
+    wrapped_data_key = Column(Text, nullable=True)  # Encrypted data key (nullable for legacy)
     api_key_encrypted = Column(Text, nullable=False)
     api_secret_encrypted = Column(Text, nullable=False)
+    
+    # Security metadata
     is_testnet = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    last_used_at = Column(DateTime, nullable=True)
+    error_count = Column(Integer, default=0)  # For circuit breaker
+    
+    # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
