@@ -1,6 +1,6 @@
 """Database migration utilities for syncing table structure."""
 import logging
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 logger = logging.getLogger(__name__)
@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 async def sync_database_schema(engine: AsyncEngine, drop_all: bool = False):
     """
     Sync database schema with model definitions.
+    Automatically detects and adds missing columns.
     
     Args:
         engine: SQLAlchemy async engine
@@ -28,128 +29,91 @@ async def sync_database_schema(engine: AsyncEngine, drop_all: bool = False):
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Tables created/verified")
         
-        # Run column migrations for existing tables
-        await _migrate_api_credentials(conn)
-        await _migrate_users(conn)
-        await _migrate_sessions(conn)
-        await _migrate_position_configs(conn)
+        # Auto-sync columns for all models
+        await conn.run_sync(_auto_migrate_columns, Base)
         
     logger.info("Database schema sync completed")
 
 
-async def _column_exists(conn, table_name: str, column_name: str) -> bool:
-    """Check if a column exists in a table."""
-    result = await conn.execute(text(f"""
-        SELECT column_name FROM information_schema.columns 
-        WHERE table_name = :table_name AND column_name = :column_name
-    """), {"table_name": table_name, "column_name": column_name})
-    return result.fetchone() is not None
-
-
-async def _add_column_if_not_exists(conn, table_name: str, column_name: str, column_def: str):
-    """Add a column to a table if it doesn't exist."""
-    if not await _column_exists(conn, table_name, column_name):
-        await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}"))
-        logger.info(f"Added column {table_name}.{column_name}")
-        return True
-    return False
-
-
-async def _migrate_api_credentials(conn):
-    """Migrate api_credentials table."""
-    table = "api_credentials"
+def _get_column_type_sql(column) -> str:
+    """Convert SQLAlchemy column type to SQL type string."""
+    from sqlalchemy import Integer, String, Float, Boolean, DateTime, Text
+    from sqlalchemy.types import Enum
     
-    # Check if table exists
-    result = await conn.execute(text("""
-        SELECT table_name FROM information_schema.tables 
-        WHERE table_name = :table_name
-    """), {"table_name": table})
-    if not result.fetchone():
-        logger.info(f"Table {table} doesn't exist, will be created by create_all")
-        return
+    col_type = type(column.type)
     
-    # Add missing columns
-    await _add_column_if_not_exists(conn, table, "user_id", "INTEGER")
-    await _add_column_if_not_exists(conn, table, "wrapped_data_key", "TEXT")
-    await _add_column_if_not_exists(conn, table, "error_count", "INTEGER DEFAULT 0")
-    await _add_column_if_not_exists(conn, table, "last_used_at", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-    
-    # Create index if not exists
-    try:
-        await conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_user_id ON {table}(user_id)"))
-    except Exception as e:
-        logger.debug(f"Index might already exist: {e}")
+    if col_type == Integer:
+        return "INTEGER"
+    elif col_type == String:
+        length = getattr(column.type, 'length', 255) or 255
+        return f"VARCHAR({length})"
+    elif col_type == Float:
+        return "FLOAT"
+    elif col_type == Boolean:
+        return "BOOLEAN"
+    elif col_type == DateTime:
+        return "TIMESTAMP"
+    elif col_type == Text:
+        return "TEXT"
+    elif col_type == Enum or 'Enum' in str(col_type):
+        # For enum types, use VARCHAR
+        return "VARCHAR(50)"
+    else:
+        # Fallback - try to use the dialect-specific compile
+        try:
+            return str(column.type)
+        except Exception:
+            return "TEXT"
 
 
-async def _migrate_users(conn):
-    """Migrate users table."""
-    table = "users"
-    
-    result = await conn.execute(text("""
-        SELECT table_name FROM information_schema.tables 
-        WHERE table_name = :table_name
-    """), {"table_name": table})
-    if not result.fetchone():
-        return
-    
-    # Add missing columns for user model
-    await _add_column_if_not_exists(conn, table, "username", "VARCHAR(100)")
-    await _add_column_if_not_exists(conn, table, "role", "VARCHAR(20) DEFAULT 'user'")
-    await _add_column_if_not_exists(conn, table, "is_active", "BOOLEAN DEFAULT TRUE")
-    await _add_column_if_not_exists(conn, table, "is_email_verified", "BOOLEAN DEFAULT FALSE")
-    await _add_column_if_not_exists(conn, table, "email_verified_at", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "email_verify_token", "VARCHAR(255)")
-    await _add_column_if_not_exists(conn, table, "email_verify_token_expires", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "password_reset_token", "VARCHAR(255)")
-    await _add_column_if_not_exists(conn, table, "password_reset_token_expires", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "last_login_at", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "failed_login_attempts", "INTEGER DEFAULT 0")
-    await _add_column_if_not_exists(conn, table, "locked_until", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+def _get_default_sql(column) -> str:
+    """Get SQL default value for a column."""
+    if column.default is not None and hasattr(column.default, 'arg'):
+        default = column.default.arg
+        # Skip callable defaults (like datetime.utcnow)
+        if callable(default):
+            return ""
+        if isinstance(default, bool):
+            return " DEFAULT TRUE" if default else " DEFAULT FALSE"
+        elif isinstance(default, (int, float)):
+            return f" DEFAULT {default}"
+        elif isinstance(default, str):
+            return f" DEFAULT '{default}'"
+    return ""
 
 
-async def _migrate_sessions(conn):
-    """Migrate sessions table."""
-    table = "sessions"
+def _auto_migrate_columns(conn, Base):
+    """Automatically add missing columns by comparing model to database."""
+    inspector = inspect(conn)
+    table_names = inspector.get_table_names()
     
-    result = await conn.execute(text("""
-        SELECT table_name FROM information_schema.tables 
-        WHERE table_name = :table_name
-    """), {"table_name": table})
-    if not result.fetchone():
-        return
-    
-    await _add_column_if_not_exists(conn, table, "refresh_token_hash", "VARCHAR(255)")
-    await _add_column_if_not_exists(conn, table, "refresh_expires_at", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "revoked_at", "TIMESTAMP")
-    await _add_column_if_not_exists(conn, table, "last_used_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-
-
-async def _migrate_position_configs(conn):
-    """Migrate position_configs table."""
-    table = "position_configs"
-    
-    result = await conn.execute(text("""
-        SELECT table_name FROM information_schema.tables 
-        WHERE table_name = :table_name
-    """), {"table_name": table})
-    if not result.fetchone():
-        return
-    
-    # SuperTrend parameters that might be missing
-    await _add_column_if_not_exists(conn, table, "ema_len", "INTEGER DEFAULT 8")
-    await _add_column_if_not_exists(conn, table, "atr_len", "INTEGER DEFAULT 14")
-    await _add_column_if_not_exists(conn, table, "base_mult", "FLOAT DEFAULT 2.0")
-    await _add_column_if_not_exists(conn, table, "vol_lookback", "INTEGER DEFAULT 20")
-    await _add_column_if_not_exists(conn, table, "vol_power", "FLOAT DEFAULT 1.0")
-    await _add_column_if_not_exists(conn, table, "trend_lookback", "INTEGER DEFAULT 25")
-    await _add_column_if_not_exists(conn, table, "trend_impact", "FLOAT DEFAULT 0.4")
-    await _add_column_if_not_exists(conn, table, "mult_min", "FLOAT DEFAULT 1.0")
-    await _add_column_if_not_exists(conn, table, "mult_max", "FLOAT DEFAULT 4.0")
-    await _add_column_if_not_exists(conn, table, "confirm_bars", "INTEGER DEFAULT 1")
-    await _add_column_if_not_exists(conn, table, "delay_bars", "INTEGER DEFAULT 0")
-    await _add_column_if_not_exists(conn, table, "bars_since_open", "INTEGER DEFAULT 0")
-    await _add_column_if_not_exists(conn, table, "last_regime", "INTEGER DEFAULT 0")
-    await _add_column_if_not_exists(conn, table, "entry_bar_time", "TIMESTAMP")
-
+    for table_name, table in Base.metadata.tables.items():
+        # Check if table exists
+        if table_name not in table_names:
+            logger.info(f"Table {table_name} doesn't exist yet, skipping column migration")
+            continue
+        
+        # Get existing columns
+        existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
+        
+        # Check each model column
+        for column in table.columns:
+            if column.name not in existing_columns:
+                col_type = _get_column_type_sql(column)
+                default = _get_default_sql(column)
+                
+                sql = f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type}{default}"
+                try:
+                    conn.execute(text(sql))
+                    logger.info(f"Added column {table_name}.{column.name} ({col_type}{default})")
+                except Exception as e:
+                    logger.error(f"Failed to add column {table_name}.{column.name}: {e}")
+        
+        # Create indexes for columns that have index=True
+        for column in table.columns:
+            if column.index and column.name in existing_columns:
+                index_name = f"ix_{table_name}_{column.name}"
+                try:
+                    conn.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name}({column.name})"))
+                except Exception:
+                    pass  # Index might already exist
