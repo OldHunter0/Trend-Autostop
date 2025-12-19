@@ -8,7 +8,7 @@ from typing import List
 from datetime import datetime
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, get_current_active_user, get_client_ip, get_user_agent
+from app.core.deps import get_current_user, get_current_active_user, get_current_verified_user, get_client_ip, get_user_agent
 from app.models.user import User, AuditLog
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ async def log_credential_audit(
 async def create_credential(
     data: APICredentialCreate,
     request: Request,
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create new API credential with envelope encryption."""
@@ -99,7 +99,7 @@ async def create_credential(
 
 @router.get("/credentials", response_model=List[APICredentialResponse])
 async def list_credentials(
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List user's API credentials."""
@@ -115,7 +115,7 @@ async def list_credentials(
 async def delete_credential(
     credential_id: int,
     request: Request,
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete API credential (unbind)."""
@@ -157,7 +157,7 @@ def decrypt_credential(credential: APICredential) -> tuple:
 @router.get("/credentials/{credential_id}/unmanaged-positions")
 async def get_unmanaged_positions(
     credential_id: int,
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get positions that are not yet managed by any config."""
@@ -232,11 +232,16 @@ async def get_unmanaged_positions(
 @router.post("/configs", response_model=PositionConfigResponse, status_code=status.HTTP_201_CREATED)
 async def create_config(
     data: PositionConfigCreate,
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create new position configuration."""
-    # Verify credential exists
-    result = await db.execute(select(APICredential).where(APICredential.id == data.credential_id))
+    # Verify credential exists and belongs to user
+    result = await db.execute(
+        select(APICredential)
+        .where(APICredential.id == data.credential_id)
+        .where(APICredential.user_id == user.id)
+    )
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Credential not found")
     
@@ -278,16 +283,40 @@ async def create_config(
 
 
 @router.get("/configs", response_model=List[PositionConfigResponse])
-async def list_configs(db: AsyncSession = Depends(get_db)):
-    """List all position configurations."""
-    result = await db.execute(select(PositionConfig).order_by(desc(PositionConfig.created_at)))
+async def list_configs(
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List user's position configurations."""
+    # Get user's credentials first
+    creds_result = await db.execute(
+        select(APICredential.id).where(APICredential.user_id == user.id)
+    )
+    user_cred_ids = [c for c in creds_result.scalars().all()]
+    
+    # Get configs for user's credentials
+    result = await db.execute(
+        select(PositionConfig)
+        .where(PositionConfig.credential_id.in_(user_cred_ids))
+        .order_by(desc(PositionConfig.created_at))
+    )
     return result.scalars().all()
 
 
 @router.get("/configs/{config_id}", response_model=PositionConfigResponse)
-async def get_config(config_id: int, db: AsyncSession = Depends(get_db)):
+async def get_config(
+    config_id: int,
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
     """Get specific position configuration."""
-    result = await db.execute(select(PositionConfig).where(PositionConfig.id == config_id))
+    # Join with credential to verify ownership
+    result = await db.execute(
+        select(PositionConfig)
+        .join(APICredential, PositionConfig.credential_id == APICredential.id)
+        .where(PositionConfig.id == config_id)
+        .where(APICredential.user_id == user.id)
+    )
     config = result.scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
@@ -298,10 +327,17 @@ async def get_config(config_id: int, db: AsyncSession = Depends(get_db)):
 async def update_config(
     config_id: int,
     data: PositionConfigUpdate,
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update position configuration."""
-    result = await db.execute(select(PositionConfig).where(PositionConfig.id == config_id))
+    # Verify ownership
+    result = await db.execute(
+        select(PositionConfig)
+        .join(APICredential, PositionConfig.credential_id == APICredential.id)
+        .where(PositionConfig.id == config_id)
+        .where(APICredential.user_id == user.id)
+    )
     config = result.scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
@@ -329,9 +365,19 @@ async def update_config(
 
 
 @router.delete("/configs/{config_id}")
-async def delete_config(config_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_config(
+    config_id: int,
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
     """Delete position configuration."""
-    result = await db.execute(select(PositionConfig).where(PositionConfig.id == config_id))
+    # Verify ownership
+    result = await db.execute(
+        select(PositionConfig)
+        .join(APICredential, PositionConfig.credential_id == APICredential.id)
+        .where(PositionConfig.id == config_id)
+        .where(APICredential.user_id == user.id)
+    )
     config = result.scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
@@ -342,9 +388,19 @@ async def delete_config(config_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/configs/{config_id}/pause")
-async def pause_config(config_id: int, db: AsyncSession = Depends(get_db)):
+async def pause_config(
+    config_id: int,
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
     """Pause position monitoring."""
-    result = await db.execute(select(PositionConfig).where(PositionConfig.id == config_id))
+    # Verify ownership
+    result = await db.execute(
+        select(PositionConfig)
+        .join(APICredential, PositionConfig.credential_id == APICredential.id)
+        .where(PositionConfig.id == config_id)
+        .where(APICredential.user_id == user.id)
+    )
     config = result.scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
@@ -355,9 +411,19 @@ async def pause_config(config_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/configs/{config_id}/resume")
-async def resume_config(config_id: int, db: AsyncSession = Depends(get_db)):
+async def resume_config(
+    config_id: int,
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
     """Resume position monitoring."""
-    result = await db.execute(select(PositionConfig).where(PositionConfig.id == config_id))
+    # Verify ownership
+    result = await db.execute(
+        select(PositionConfig)
+        .join(APICredential, PositionConfig.credential_id == APICredential.id)
+        .where(PositionConfig.id == config_id)
+        .where(APICredential.user_id == user.id)
+    )
     config = result.scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=404, detail="Config not found")
@@ -370,9 +436,29 @@ async def resume_config(config_id: int, db: AsyncSession = Depends(get_db)):
 # ============ Positions ============
 
 @router.get("/positions", response_model=List[PositionResponse])
-async def list_positions(db: AsyncSession = Depends(get_db)):
-    """List all position snapshots."""
-    result = await db.execute(select(Position).order_by(desc(Position.updated_at)))
+async def list_positions(
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List user's position snapshots."""
+    # Get user's credential IDs
+    creds_result = await db.execute(
+        select(APICredential.id).where(APICredential.user_id == user.id)
+    )
+    user_cred_ids = [c for c in creds_result.scalars().all()]
+    
+    # Get config IDs for user's credentials
+    configs_result = await db.execute(
+        select(PositionConfig.id).where(PositionConfig.credential_id.in_(user_cred_ids))
+    )
+    user_config_ids = [c for c in configs_result.scalars().all()]
+    
+    # Get positions for user's configs
+    result = await db.execute(
+        select(Position)
+        .where(Position.config_id.in_(user_config_ids))
+        .order_by(desc(Position.updated_at))
+    )
     return result.scalars().all()
 
 
@@ -380,7 +466,7 @@ async def list_positions(db: AsyncSession = Depends(get_db)):
 async def adjust_stop_loss(
     config_id: int,
     data: StopLossAdjustment,
-    user: User = Depends(get_current_active_user),
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Manually adjust stop loss price."""
@@ -466,12 +552,35 @@ async def adjust_stop_loss(
 async def list_logs(
     limit: int = 100,
     config_id: int = None,
+    user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List operation logs."""
-    query = select(OperationLog).order_by(desc(OperationLog.created_at)).limit(limit)
+    """List user's operation logs."""
+    # Get user's credential IDs
+    creds_result = await db.execute(
+        select(APICredential.id).where(APICredential.user_id == user.id)
+    )
+    user_cred_ids = [c for c in creds_result.scalars().all()]
+    
+    # Get config IDs for user's credentials
+    configs_result = await db.execute(
+        select(PositionConfig.id).where(PositionConfig.credential_id.in_(user_cred_ids))
+    )
+    user_config_ids = [c for c in configs_result.scalars().all()]
+    
+    # Build query for user's logs
+    query = select(OperationLog).where(
+        OperationLog.config_id.in_(user_config_ids)
+    ).order_by(desc(OperationLog.created_at)).limit(limit)
+    
     if config_id:
-        query = query.where(OperationLog.config_id == config_id)
+        # Additional filter by specific config (must be user's)
+        if config_id not in user_config_ids:
+            return []
+        query = select(OperationLog).where(
+            OperationLog.config_id == config_id
+        ).order_by(desc(OperationLog.created_at)).limit(limit)
+    
     result = await db.execute(query)
     return result.scalars().all()
 
@@ -479,17 +588,33 @@ async def list_logs(
 # ============ Dashboard ============
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
-async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
-    """Get dashboard statistics."""
-    configs_result = await db.execute(select(PositionConfig))
-    configs = configs_result.scalars().all()
+async def get_dashboard_stats(
+    user: User = Depends(get_current_verified_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get user's dashboard statistics."""
+    # Get user's credential IDs
+    creds_result = await db.execute(
+        select(APICredential.id).where(APICredential.user_id == user.id)
+    )
+    user_cred_ids = [c for c in creds_result.scalars().all()]
     
-    positions_result = await db.execute(select(Position))
+    # Get user's configs
+    configs_result = await db.execute(
+        select(PositionConfig).where(PositionConfig.credential_id.in_(user_cred_ids))
+    )
+    configs = configs_result.scalars().all()
+    user_config_ids = [c.id for c in configs]
+    
+    # Get user's positions
+    positions_result = await db.execute(
+        select(Position).where(Position.config_id.in_(user_config_ids))
+    )
     positions = positions_result.scalars().all()
     
     active_count = sum(1 for c in configs if c.status == "active")
     paused_count = sum(1 for c in configs if c.status == "paused")
-    total_pnl = sum(p.unrealized_pnl for p in positions)
+    total_pnl = sum(p.unrealized_pnl for p in positions if p.unrealized_pnl)
     
     last_update = None
     if positions:

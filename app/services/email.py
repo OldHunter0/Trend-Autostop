@@ -1,6 +1,7 @@
 """Email service for sending verification and notification emails."""
 import logging
-from typing import Optional
+import traceback
+from typing import Optional, Tuple
 import aiosmtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -14,20 +15,50 @@ class EmailService:
     """Service for sending emails."""
     
     @staticmethod
+    def get_smtp_config() -> dict:
+        """Get current SMTP configuration (for debugging)."""
+        return {
+            "host": settings.SMTP_HOST,
+            "port": settings.SMTP_PORT,
+            "user": settings.SMTP_USER[:3] + "***" if settings.SMTP_USER else None,
+            "password_set": bool(settings.SMTP_PASSWORD),
+            "from_email": settings.SMTP_FROM_EMAIL,
+            "from_name": settings.SMTP_FROM_NAME,
+        }
+    
+    @staticmethod
     async def send_email(
         to_email: str,
         subject: str,
         html_content: str,
         text_content: Optional[str] = None
-    ) -> bool:
-        """Send an email."""
-        if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
-            logger.warning("SMTP not configured, skipping email send")
-            return False
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Send an email.
+        Returns: (success, error_message)
+        """
+        # Check SMTP configuration
+        if not settings.SMTP_USER:
+            error_msg = "SMTP_USER not configured"
+            logger.warning(f"Email not sent to {to_email}: {error_msg}")
+            return False, error_msg
+        
+        if not settings.SMTP_PASSWORD:
+            error_msg = "SMTP_PASSWORD not configured"
+            logger.warning(f"Email not sent to {to_email}: {error_msg}")
+            return False, error_msg
+        
+        if not settings.SMTP_HOST:
+            error_msg = "SMTP_HOST not configured"
+            logger.warning(f"Email not sent to {to_email}: {error_msg}")
+            return False, error_msg
+        
+        logger.info(f"Attempting to send email to {to_email} via {settings.SMTP_HOST}:{settings.SMTP_PORT}")
         
         try:
             message = MIMEMultipart("alternative")
-            message["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL or settings.SMTP_USER}>"
+            from_email = settings.SMTP_FROM_EMAIL or settings.SMTP_USER
+            message["From"] = f"{settings.SMTP_FROM_NAME} <{from_email}>"
             message["To"] = to_email
             message["Subject"] = subject
             
@@ -38,7 +69,9 @@ class EmailService:
             # Add HTML version
             message.attach(MIMEText(html_content, "html"))
             
-            # Send email
+            # Send email with detailed logging
+            logger.debug(f"Connecting to SMTP server {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+            
             await aiosmtplib.send(
                 message,
                 hostname=settings.SMTP_HOST,
@@ -48,12 +81,29 @@ class EmailService:
                 start_tls=True
             )
             
-            logger.info(f"Email sent successfully to {to_email}")
-            return True
+            logger.info(f"✓ Email sent successfully to {to_email}")
+            return True, None
+            
+        except aiosmtplib.SMTPAuthenticationError as e:
+            error_msg = f"SMTP authentication failed: {e}"
+            logger.error(f"✗ {error_msg}")
+            return False, error_msg
+            
+        except aiosmtplib.SMTPConnectError as e:
+            error_msg = f"Failed to connect to SMTP server: {e}"
+            logger.error(f"✗ {error_msg}")
+            return False, error_msg
+            
+        except aiosmtplib.SMTPException as e:
+            error_msg = f"SMTP error: {e}"
+            logger.error(f"✗ {error_msg}")
+            return False, error_msg
             
         except Exception as e:
-            logger.error(f"Failed to send email to {to_email}: {e}")
-            return False
+            error_msg = f"Unexpected error sending email: {type(e).__name__}: {e}"
+            logger.error(f"✗ {error_msg}")
+            logger.debug(traceback.format_exc())
+            return False, error_msg
     
     @classmethod
     async def send_verification_email(cls, to_email: str, token: str) -> bool:
@@ -112,7 +162,10 @@ class EmailService:
         如果您没有注册 Trend-Autostop 账户，请忽略此邮件。
         """
         
-        return await cls.send_email(to_email, subject, html_content, text_content)
+        success, error = await cls.send_email(to_email, subject, html_content, text_content)
+        if not success:
+            logger.warning(f"Failed to send verification email to {to_email}: {error}")
+        return success
     
     @classmethod
     async def send_password_reset_email(cls, to_email: str, token: str) -> bool:
@@ -174,5 +227,8 @@ class EmailService:
         如果您没有请求重置密码，请忽略此邮件，您的密码不会被更改。
         """
         
-        return await cls.send_email(to_email, subject, html_content, text_content)
+        success, error = await cls.send_email(to_email, subject, html_content, text_content)
+        if not success:
+            logger.warning(f"Failed to send password reset email to {to_email}: {error}")
+        return success
 

@@ -81,6 +81,22 @@
         
         <!-- Main Content -->
         <main class="main-content">
+            <!-- Email Verification Banner -->
+            {% if user and not user.is_email_verified %}
+            <div class="email-verify-banner" id="email-verify-banner">
+                <div class="verify-banner-content">
+                    <span class="verify-icon">📧</span>
+                    <span class="verify-text">您的邮箱尚未验证，部分功能将受限。请检查 <strong>{{ user.email }}</strong> 的收件箱并完成验证。</span>
+                </div>
+                <div class="verify-banner-actions">
+                    <button onclick="resendVerificationEmail()" class="verify-resend-btn" id="resend-btn">
+                        重新发送验证邮件
+                    </button>
+                    <button onclick="dismissBanner()" class="verify-dismiss-btn" title="暂时关闭">✕</button>
+                </div>
+            </div>
+            {% endif %}
+            
             <header class="page-header">
                 <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
                 <div class="header-actions">
@@ -88,7 +104,7 @@
                 </div>
             </header>
             
-            <div class="content-wrapper">
+            <div class="content-wrapper {% if user and not user.is_email_verified %}content-restricted{% endif %}">
                 {% block content %}{% endblock %}
             </div>
         </main>
@@ -114,6 +130,66 @@
             }
             window.location.href = '/auth/login';
         }
+        
+        async function resendVerificationEmail() {
+            const btn = document.getElementById('resend-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '发送中...';
+            
+            try {
+                const response = await fetch('/api/auth/resend-verification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: '{{ user.email if user else "" }}' })
+                });
+                
+                if (response.ok) {
+                    btn.textContent = '已发送 ✓';
+                    btn.classList.add('sent');
+                    if (typeof showToast === 'function') {
+                        showToast('验证邮件已发送，请检查收件箱', 'success');
+                    }
+                    // 60秒后恢复按钮
+                    setTimeout(() => {
+                        btn.disabled = false;
+                        btn.textContent = originalText;
+                        btn.classList.remove('sent');
+                    }, 60000);
+                } else {
+                    const data = await response.json();
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                    if (typeof showToast === 'function') {
+                        showToast(data.detail || '发送失败，请稍后重试', 'error');
+                    }
+                }
+            } catch (e) {
+                console.error('Resend error:', e);
+                btn.textContent = originalText;
+                btn.disabled = false;
+                if (typeof showToast === 'function') {
+                    showToast('网络错误，请稍后重试', 'error');
+                }
+            }
+        }
+        
+        function dismissBanner() {
+            const banner = document.getElementById('email-verify-banner');
+            if (banner) {
+                banner.style.display = 'none';
+                // 保存到 sessionStorage，刷新页面后会重新显示
+                sessionStorage.setItem('email-banner-dismissed', 'true');
+            }
+        }
+        
+        // 检查是否已暂时关闭提醒
+        document.addEventListener('DOMContentLoaded', function() {
+            if (sessionStorage.getItem('email-banner-dismissed') === 'true') {
+                const banner = document.getElementById('email-verify-banner');
+                if (banner) banner.style.display = 'none';
+            }
+        });
     </script>
     {% block extra_js %}{% endblock %}
 </body>
