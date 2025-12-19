@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     DEFAULT_EXCHANGE: str = "binance"
     
     # Email Configuration
-    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_HOST: str = "smtp.resend.com"
     SMTP_PORT: int = 465
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
